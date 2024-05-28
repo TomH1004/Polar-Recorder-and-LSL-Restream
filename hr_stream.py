@@ -17,7 +17,7 @@ def main():
     print(f"Connected to {inlet.info().name()} from {inlet.info().hostname()}.")
 
     # Create a new stream to send data forward
-    info = StreamInfo('HR', 'HeartRate', 1, 0, 'float32', 'myuniqueid12345')
+    info = StreamInfo('HeartRate', 'ExciteOMeter', 1, 10, 'float32', 'hrStream')
     outlet = StreamOutlet(info)
 
     try:

@@ -98,7 +98,7 @@ def main():
     print(f"Connected to {inlet.info().name()} from {inlet.info().hostname()}.")
 
     # Create a new stream to send data forward
-    info = StreamInfo('RawECG', 'RawECG', 1, 0, 'float32', 'myuniqueid12345')
+    info = StreamInfo('RawECG', 'ExciteOMeter', 1, 130, 'int32', 'ecgStream')
     outlet = StreamOutlet(info)
 
     last_beat_time = 0
