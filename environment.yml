@@ -1,0 +1,10 @@
+name: heart_rate_project
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+    - keyboard
+    - pylsl
