@@ -3,7 +3,7 @@ import csv
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
-from pylsl import StreamInlet, resolve_stream
+from pylsl import StreamInlet, resolve_stream, local_clock
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
@@ -162,7 +162,7 @@ class LSLStreamRecorder:
 
     def mark_timestamp(self):
         if self.recording:
-            current_time = time.time()
+            current_time = local_clock()
             self.marked_timestamps.append(current_time)
             messagebox.showinfo("Timestamp Marked", f"Marked timestamp at {current_time}")
         else:
@@ -175,13 +175,14 @@ class LSLStreamRecorder:
             csv_writer.writerow(['Timestamp', 'Value'])  # Write header
             while not self.stop_event.is_set():
                 if self.recording_event.is_set():
-                    sample, timestamp = inlet.pull_sample(timeout=1.0)
+                    sample, _ = inlet.pull_sample(timeout=1.0)  # Ignore the original LSL timestamp
                     if sample:
                         value = sample[0]
+                        current_time = local_clock()  # Use local_clock for a consistent timestamp
                         self.data_buffers[stream_name].append(value)
-                        csv_writer.writerow([timestamp, value])
+                        csv_writer.writerow([current_time, value])
                         csvfile.flush()
-                time.sleep(0.05)
+                time.sleep(0.01)
 
     def update_plot(self):
         # Update the graphs
