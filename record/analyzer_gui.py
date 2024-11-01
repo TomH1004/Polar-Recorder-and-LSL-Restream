@@ -85,7 +85,7 @@ class LSLDataAnalyzer:
 
     def analyze_data(self, data_buffers, marked_timestamps):
         self.results_text.delete(1.0, tk.END)
-        streams = ["HeartRate", "RRinterval", "RawECG"]
+        streams = ["HeartRate", "RRinterval"]
 
         for stream in streams:
             data = data_buffers.get(stream, [])

@@ -128,6 +128,8 @@ class LSLStreamRecorder:
         self.mark_button.config(state=tk.NORMAL)
         self.start_button.config(text="Start Recording")
 
+        messagebox.showinfo("Connection Established", "Connection to the device has been successfully established.")
+
     def setup_threads(self):
         # Resolve streams and create inlets
         self.stop_event.set()  # Stop any existing threads
@@ -155,10 +157,13 @@ class LSLStreamRecorder:
             self.recording_event.set()
             self.start_button.config(text="Stop Recording")
         else:
-            self.recording = False
-            self.recording_event.clear()
-            self.start_button.config(text="Start Recording")
-            self.save_marked_timestamps()
+            self.stop_recording()
+
+    def stop_recording(self):
+        self.recording = False
+        self.recording_event.clear()
+        self.start_button.config(text="Start Recording")
+        self.save_marked_timestamps()
 
     def mark_timestamp(self):
         if self.recording:
@@ -173,16 +178,20 @@ class LSLStreamRecorder:
         with open(csv_filename, 'w', newline='') as csvfile:
             csv_writer = csv.writer(csvfile)
             csv_writer.writerow(['Timestamp', 'Value'])  # Write header
-            while not self.stop_event.is_set():
-                if self.recording_event.is_set():
-                    sample, _ = inlet.pull_sample(timeout=1.0)  # Ignore the original LSL timestamp
-                    if sample:
-                        value = sample[0]
-                        current_time = local_clock()  # Use local_clock for a consistent timestamp
-                        self.data_buffers[stream_name].append(value)
-                        csv_writer.writerow([current_time, value])
-                        csvfile.flush()
-                time.sleep(0.01)
+            try:
+                while not self.stop_event.is_set():
+                    if self.recording_event.is_set():
+                        sample, _ = inlet.pull_sample(timeout=1.0)  # Ignore the original LSL timestamp
+                        if sample:
+                            value = sample[0]
+                            current_time = local_clock()  # Use local_clock for a consistent timestamp
+                            self.data_buffers[stream_name].append(value)
+                            csv_writer.writerow([current_time, value])
+                            csvfile.flush()
+                    time.sleep(0.001)
+            except Exception as e:
+                self.stop_recording()
+                messagebox.showerror("Stream Recording Error", f"An error occurred while recording '{stream_name}': {str(e)}")
 
     def update_plot(self):
         # Update the graphs
