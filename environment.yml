@@ -5,6 +5,10 @@ channels:
 dependencies:
   - python=3.9
   - pip
+  - numpy
+  - matplotlib
+  - tkinter
   - pip:
-    - keyboard
-    - pylsl
+      - keyboard
+      - pylsl
+      - csv
