@@ -113,7 +113,11 @@ class LSLStreamRecorder:
             return
 
         # Create folder for participant
-        self.participant_folder = f"Participant_{participant_id}"
+        participant_data_folder = "Participant_Data"
+        if not os.path.exists(participant_data_folder):
+            os.makedirs(participant_data_folder)
+
+        self.participant_folder = os.path.join(participant_data_folder, f"Participant_{participant_id}")
         if os.path.exists(self.participant_folder):
             messagebox.showerror("Folder Exists", f"The folder for Participant ID '{participant_id}' already exists.")
             return
