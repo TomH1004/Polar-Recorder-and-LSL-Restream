@@ -1,9 +1,67 @@
-## Restreaming Data from the ExciteOMeter App
+# Polar Recorder and LSL Restream
 
-The easiest way to restream the three streams, `RawECG`, `HeartRate`, and `RRinterval`, from the ExciteOMeter App that streams the LSL in the same WIFI network, is to use the script `stream_combined.py`.
+## Project Overview
 
-If only a specific stream is desired, one can run `ecg_stream.py`, `hr_stream.py`, or `rr_stream.py`.
+Polar Recorder and LSL Restream is a project designed to facilitate data collection and restreaming of biometric signals using a Polar H10 heart rate monitor. It is composed of two main directories: `record` and `stream`. These directories contain scripts for recording biometric data and restreaming that data via Lab Streaming Layer (LSL).
 
-For personal use during development for a university project. Restreams the LSL signal to the same network which makes it detectable by the LSL Plugin in Unity. Includes processing of RR Stream for HRV markers.
+### Directory Structure
+- **record**: Contains scripts for recording data and analyzing results.
+- **stream**: Contains scripts for restreaming the recorded data via LSL.
 
-## Requires the Excite-O-Meter App to be installed on a smartphone or computer with the ECG, HR and RR stream being active. Smartphone or computer has to be connected to the same network as machine running this script.
+## Record Directory
+The `record` directory includes two key scripts:
+
+### 1. `record_gui.py`
+
+This script opens a simple GUI that allows for the recording of the following biometric signals:
+- Heart Rate (HR)
+- RR Interval
+- Electrocardiogram (ECG)
+
+Data is collected from a Polar H10 device and transmitted to the **Excite-O-Meter App** via Bluetooth, which then streams the data via LSL. The Excite-O-Meter App is available for **Windows** and **Android** platforms.
+
+The GUI allows the user to:
+- Enter a participant ID.
+- Record, pause, and add timestamps to the recording session.
+- Store each data type in separate CSV files for further analysis.
+
+### 2. `analyzer_gui.py`
+
+This script provides a simple GUI for analyzing the recorded data. The user inputs the participant ID, and the script loads the corresponding CSV files to calculate various metrics, including:
+- Minimum, Maximum, Mean values
+- Root Mean Square of Successive Differences (RMSSD)
+- Interquartile Range (IQR)
+
+The results are displayed for easy review.
+
+## Stream Directory
+The `stream` directory contains several scripts designed to restream data from the Excite-O-Meter App via LSL. The available functionality includes:
+
+- **Single Stream Restream**: Restreams a single data stream (HR, RR Interval, or ECG) to enable integration with other applications such as Unity.
+- **Parallel Stream Restream**: Restreams HR, RR Interval, and ECG streams concurrently for more complex data analysis or use cases.
+
+### `streamCheck.py`
+
+This utility script lists all available LSL streams to help the user verify the data streams that are currently active and accessible.
+
+## How to Use
+1. **Recording Data**:
+   - Run `record_gui.py` to start recording biometric data from a Polar H10 device.
+   - Enter the participant ID and use the GUI to control the recording session.
+   - Data will be stored in separate CSV files in the `record` directory.
+
+2. **Analyzing Data**:
+   - Run `analyzer_gui.py` to load and analyze recorded data.
+   - Metrics such as min, max, mean, RMSSD, and IQR will be calculated automatically.
+
+3. **Streaming Data**:
+   - Use the scripts in the `stream` directory to restream the recorded data via LSL.
+   - Run `streamCheck.py` to verify active streams.
+
+## Setup
+**environment.yml** can be used for easy setup of dependencies and environment configuration.
+
+## Requirements
+
+- **Polar H10**
+- **Excite-O-Meter App** available for Windows and Android
