@@ -82,5 +82,5 @@ def generate_hrv_graphs(data_file, participants_per_group=2):
 
 
 # Path to the simulated data file
-data_file = "simulated_hrv_data.csv"
+data_file = "hrv_values.csv"
 generate_hrv_graphs(data_file)

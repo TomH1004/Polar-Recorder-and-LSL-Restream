@@ -45,7 +45,6 @@ def clean_rr_intervals(rr_intervals):
     interpolated = interpolator(indices)
     return interpolated
 
-
 # Process all folders inside Participant_Data
 results = []
 for participant in os.listdir(base_dir):
@@ -79,6 +78,8 @@ for participant in os.listdir(base_dir):
     overall_sdnn = calculate_sdnn(rr_data['Cleaned Value'])
     overall_pnn50 = calculate_pnn50(rr_data['Cleaned Value'])
 
+    segment_count = 1
+
     # RMSSD, SDNN, and pNN50 between timestamps
     for i in range(len(timestamps) - 1):
         start = timestamps.iloc[i]['Marked Timestamp']
@@ -97,19 +98,19 @@ for participant in os.listdir(base_dir):
             pnn50 = None
 
         results.append({
-            "Participant": participant,
-            "Start_Timestamp": start,
-            "End_Timestamp": end,
+            "Participant": f"Participant_hrv_{participant}",
+            "Segment": f"Segment_{segment_count}",
             "RMSSD": rmssd,
             "SDNN": sdnn,
             "pNN50": pnn50
         })
 
+        segment_count += 1
+
     # Add overall metrics
     results.append({
-        "Participant": participant,
-        "Start_Timestamp": "Overall",
-        "End_Timestamp": "Overall",
+        "Participant": f"Participant_hrv_{participant}",
+        "Segment": "Overall",
         "RMSSD": overall_rmssd,
         "SDNN": overall_sdnn,
         "pNN50": overall_pnn50
