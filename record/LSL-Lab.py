@@ -14,7 +14,7 @@ class LSLGui:
     def __init__(self, master):
         self.master = master
         self.master.title("LSL Recorder & Analyzer")
-        self.master.geometry("1400x700")
+        self.master.geometry("2100x1050")
         self.master.configure(bg="#eaeaea")
 
         self.left_frame = tk.Frame(master, padx=10, pady=10, bg="#f0f0f0")
@@ -45,27 +45,28 @@ class LSLStreamRecorder:
         self.setup_ui()
 
     def setup_ui(self):
-        tk.Label(self.parent, text="LSL Stream Recorder", font=("Helvetica", 16, "bold"), bg="#f0f0f0").pack(pady=10)
+        tk.Label(self.parent, text="LSL Stream Recorder", font=("Helvetica", 48, "bold"), bg="#f0f0f0").pack(pady=10)
 
         self.participant_id_label = tk.Label(self.parent, text="Participant ID:", bg="#f0f0f0")
         self.participant_id_label.pack()
-        self.participant_id_entry = tk.Entry(self.parent, font=("Helvetica", 12))
+        self.participant_id_entry = tk.Entry(self.parent, font=("Helvetica", 32))
         self.participant_id_entry.pack(pady=5)
 
-        self.connect_button = tk.Button(self.parent, text="Connect", font=("Helvetica", 12),
+        self.connect_button = tk.Button(self.parent, text="Connect", font=("Helvetica", 32),
                                         command=self.connect_to_device)
         self.connect_button.pack(pady=5, fill=tk.X)
 
-        self.start_button = tk.Button(self.parent, text="Start Recording", font=("Helvetica", 12), state=tk.DISABLED,
+        self.start_button = tk.Button(self.parent, text="Start Recording", font=("Helvetica", 32), state=tk.DISABLED,
                                       command=self.toggle_recording)
         self.start_button.pack(pady=5, fill=tk.X)
 
-        self.mark_button = tk.Button(self.parent, text="Mark Timestamp", font=("Helvetica", 12), state=tk.DISABLED,
+        self.mark_button = tk.Button(self.parent, text="Mark Timestamp", font=("Helvetica", 32), state=tk.DISABLED,
                                      command=self.mark_timestamp)
         self.mark_button.pack(pady=5, fill=tk.X)
 
-        self.figure, self.axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
-        self.figure.suptitle("Live HR & RR Data", fontsize=14)
+        self.figure, self.ax1 = plt.subplots(figsize=(8, 6))
+        self.ax2 = self.ax1.twinx()  # Create a second y-axis
+        self.figure.suptitle("Live HR & RR Data", fontsize=28)
 
         self.canvas_plot = FigureCanvasTkAgg(self.figure, master=self.parent)
         self.canvas_widget = self.canvas_plot.get_tk_widget()
@@ -82,13 +83,21 @@ class LSLStreamRecorder:
         self.participant_folder = os.path.join("Participant_Data", f"Participant_{participant_id}")
         os.makedirs(self.participant_folder, exist_ok=True)
 
+        # Resolve all available LSL streams
+        available_streams = resolve_stream()
+
         for stream_name, stream_type, _, _ in self.streams:
-            resolved_streams = resolve_stream('type', stream_type)
-            if resolved_streams:
-                self.inlets[stream_name] = StreamInlet(resolved_streams[0])
+            for stream in available_streams:
+                inlet = StreamInlet(stream)
+                stream_info = inlet.info()
+
+                # Match both the type and name to ensure correctness
+                if stream_info.type() == stream_type and stream_info.name() == stream_name:
+                    self.inlets[stream_name] = inlet
+                    break  # Stop searching once we find the correct stream
 
         if not self.inlets:
-            messagebox.showerror("No Streams Found", "No active LSL streams were found.")
+            messagebox.showerror("No Streams Found", "No matching LSL streams were found.")
             return
 
         self.start_button.config(state=tk.NORMAL)
@@ -124,6 +133,16 @@ class LSLStreamRecorder:
         else:
             messagebox.showwarning("Recording Not Active", "Start recording before marking timestamps.")
 
+    def save_marked_timestamps(self):
+        if not self.marked_timestamps:
+            return
+
+        marked_filename = os.path.join(self.participant_folder, "marked_timestamps.csv")
+        with open(marked_filename, 'w', newline='') as marked_file:
+            csv_writer = csv.writer(marked_file)
+            csv_writer.writerow(['Timestamp'])
+            csv_writer.writerows([[ts] for ts in self.marked_timestamps])
+
     def record_stream(self, stream_name):
         csv_filename = os.path.join(self.participant_folder, f"{stream_name}_recording.csv")
         with open(csv_filename, 'w', newline='') as csvfile:
@@ -141,15 +160,36 @@ class LSLStreamRecorder:
                 time.sleep(0.001)
 
     def update_plot(self):
-        for ax, (stream_name, data) in zip(self.axes, self.data_buffers.items()):
-            ax.clear()
-            ax.set_title(stream_name)
-            ax.set_xlabel("Time (Last 100s)")
-            ax.set_ylabel("Value")
-            ax.grid(True, linestyle='--', alpha=0.6)
-            if data:
-                timestamps, values = zip(*data[-100:])
-                ax.plot(timestamps, values, linewidth=1.5)
+        self.ax1.clear()
+        self.ax2.clear()
+        has_hr_data = False
+        has_rr_data = False
+
+        if 'HeartRate' in self.data_buffers and self.data_buffers['HeartRate']:
+            timestamps_hr, values_hr = zip(*self.data_buffers['HeartRate'])
+            self.ax1.plot(timestamps_hr, values_hr, 'b-', label='Heart Rate', linewidth=1.5)
+            self.ax1.set_ylabel('Heart Rate (bpm)', color='b', labelpad=15, va='center')  # Center label
+            self.ax1.tick_params(axis='y', labelcolor='b')
+            has_hr_data = True
+
+        if 'RRinterval' in self.data_buffers and self.data_buffers['RRinterval']:
+            timestamps_rr, values_rr = zip(*self.data_buffers['RRinterval'])
+            self.ax2.plot(timestamps_rr, values_rr, 'r-', label='RR Interval', linewidth=1.5)
+
+            # Move the RR Interval label to the right and center it properly
+            self.ax2.set_ylabel('RR Interval (ms)', color='r', labelpad=15, ha='right', va='center')
+            self.ax2.yaxis.set_label_position("right")  # Ensure label is on the right
+            self.ax2.tick_params(axis='y', labelcolor='r')
+            has_rr_data = True
+
+        self.ax1.set_xlabel("Time (Last 100s)")
+        self.ax1.grid(True, linestyle='--', alpha=0.6)
+
+        # Only add legend if data exists
+        if has_hr_data:
+            self.ax1.legend(loc='upper left')
+        if has_rr_data:
+            self.ax2.legend(loc='upper right')
 
         self.canvas_plot.draw()
         self.parent.after(100, self.update_plot)
@@ -161,20 +201,20 @@ class LSLDataAnalyzer:
         self.setup_ui()
 
     def setup_ui(self):
-        tk.Label(self.parent, text="LSL Data Analyzer", font=("Helvetica", 16, "bold"), bg="#ffffff").pack(pady=10)
+        tk.Label(self.parent, text="LSL Data Analyzer", font=("Helvetica", 32, "bold"), bg="#ffffff").pack(pady=10)
 
         # Participant ID
         self.participant_id_label = tk.Label(self.parent, text="Participant ID:", bg="#ffffff")
         self.participant_id_label.pack()
-        self.participant_id_entry = tk.Entry(self.parent, font=("Helvetica", 12))
+        self.participant_id_entry = tk.Entry(self.parent, font=("Helvetica", 24))
         self.participant_id_entry.pack(pady=5)
 
         # Load Data Button
-        self.load_button = tk.Button(self.parent, text="Load Data", font=("Helvetica", 12), command=self.load_data)
+        self.load_button = tk.Button(self.parent, text="Load Data", font=("Helvetica", 24), command=self.load_data)
         self.load_button.pack(pady=5, fill=tk.X)
 
         # Results Display
-        self.results_text = tk.Text(self.parent, wrap=tk.WORD, font=("Helvetica", 12), height=15)
+        self.results_text = tk.Text(self.parent, wrap=tk.WORD, font=("Helvetica", 24), height=15)
         self.results_text.pack(pady=5, fill=tk.BOTH, expand=True)
 
     def load_data(self):
@@ -257,23 +297,25 @@ class LSLDataAnalyzer:
                 std_dev = np.std(values)
                 iqr_value = np.percentile(values, 75) - np.percentile(values, 25)
                 duration = timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0
-                sdnn = np.std(values, ddof=1)
 
                 rmssd = None
+                sdnn = None
                 if stream == "RRinterval":
                     rr_diff = np.diff(values)
                     rmssd = np.sqrt(np.mean(rr_diff ** 2)) if len(rr_diff) > 0 else None
+                    sdnn = np.std(values, ddof=1)
 
                 self.results_text.insert(tk.END, f"Segment {idx + 1} ({stream} Data):\n")
                 self.results_text.insert(tk.END, f"  Mean: {mean_value:.2f}\n")
                 self.results_text.insert(tk.END, f"  Median: {median_value:.2f}\n")
                 self.results_text.insert(tk.END, f"  Min: {min_value:.2f}\n")
                 self.results_text.insert(tk.END, f"  Max: {max_value:.2f}\n")
-                self.results_text.insert(tk.END, f"  SDNN: {sdnn:.2f}\n")
                 self.results_text.insert(tk.END, f"  Variability (Standard Deviation): {std_dev:.2f}\n")
                 self.results_text.insert(tk.END, f"  Interquartile Range (IQR): {iqr_value:.2f}\n")
                 if rmssd is not None:
                     self.results_text.insert(tk.END, f"  RMSSD: {rmssd:.2f}\n")
+                if sdnn is not None:
+                    self.results_text.insert(tk.END, f"  SDNN: {sdnn:.2f}\n")
                 self.results_text.insert(tk.END, f"  Duration: {duration:.2f} seconds\n\n")
 
                 # Analyse zwischen markierten Zeitpunkten innerhalb dieses Segments
@@ -295,9 +337,11 @@ class LSLDataAnalyzer:
                             iqr_episode = np.percentile(episode_values, 75) - np.percentile(episode_values, 25)
                             duration_episode = end_ts - start_ts
                             rmssd_episode = None
+                            sdnn_episode = None
                             if stream == "RRinterval" and len(episode_values) > 1:
                                 rr_diff = np.diff(episode_values)
                                 rmssd_episode = np.sqrt(np.mean(rr_diff ** 2)) if len(rr_diff) > 0 else None
+                                sdnn_episode = np.std(episode_values, ddof=1)
 
                             segment_episodes.append((mean_episode, median_episode, min_episode, max_episode,
                                                      std_dev_episode, iqr_episode, duration_episode, rmssd_episode))
@@ -315,6 +359,8 @@ class LSLDataAnalyzer:
                         self.results_text.insert(tk.END, f"      Interquartile Range (IQR): {iqr_episode:.2f}\n")
                         if rmssd_episode is not None:
                             self.results_text.insert(tk.END, f"      RMSSD: {rmssd_episode:.2f}\n")
+                        if sdnn_episode is not None:
+                            self.results_text.insert(tk.END, f"      SDNN: {sdnn_episode:.2f}\n")
                         self.results_text.insert(tk.END, f"      Duration: {duration_episode:.2f} seconds\n\n")
 
                 else:
