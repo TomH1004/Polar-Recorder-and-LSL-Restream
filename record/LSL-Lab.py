@@ -29,17 +29,65 @@ CLIENT_CHAR_CONFIG = "00002902-0000-1000-8000-00805f9b34fb"
 # PMD Control Commands
 PMD_COMMAND = bytearray([0x01, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
 
+# Theme colors
+DARK_BG = "#1E1E2E"  # Dark background
+DARKER_BG = "#181825"  # Darker background for contrast
+ACCENT_COLOR = "#89B4FA"  # Accent color for highlights
+TEXT_COLOR = "#CDD6F4"  # Main text color
+SECONDARY_TEXT = "#A6ADC8"  # Secondary text color
+SUCCESS_COLOR = "#A6E3A1"  # Success color
+WARNING_COLOR = "#F9E2AF"  # Warning color
+ERROR_COLOR = "#F38BA8"  # Error color
+BORDER_COLOR = "#313244"  # Border color
 
 class LSLGui:
     def __init__(self, master):
         self.master = master
         self.master.title("Polar H10 Recorder & Analyzer")
         self.master.geometry("2100x1050")
-        self.master.configure(bg="#eaeaea")
+        self.master.configure(bg=DARK_BG)
+        
+        # Configure the theme
+        self.configure_theme()
+        
+        # Create a main container with padding
+        self.main_container = tk.Frame(master, bg=DARK_BG, padx=20, pady=20)
+        self.main_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a header with app title
+        self.header = tk.Frame(self.main_container, bg=DARK_BG, pady=10)
+        self.header.pack(fill=tk.X)
+        
+        self.title_label = tk.Label(
+            self.header, 
+            text="POLAR H10 RECORDER & ANALYZER", 
+            font=("Segoe UI", 24, "bold"),
+            bg=DARK_BG,
+            fg=ACCENT_COLOR
+        )
+        self.title_label.pack()
+        
+        self.subtitle_label = tk.Label(
+            self.header,
+            text="Scientific Data Acquisition System",
+            font=("Segoe UI", 12),
+            bg=DARK_BG,
+            fg=SECONDARY_TEXT
+        )
+        self.subtitle_label.pack(pady=(0, 10))
+        
+        # Separator
+        self.separator = ttk.Separator(self.main_container, orient='horizontal')
+        self.separator.pack(fill=tk.X, pady=10)
 
-        # Set up the main frames
-        self.left_frame = tk.Frame(master, padx=10, pady=10, bg="#f0f0f0")
-        self.right_frame = tk.Frame(master, padx=10, pady=10, bg="#ffffff")
+        # Set up the main frames with modern styling
+        self.content_frame = tk.Frame(self.main_container, bg=DARK_BG)
+        self.content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.left_frame = tk.Frame(self.content_frame, bg=DARKER_BG, padx=15, pady=15, 
+                                  highlightbackground=BORDER_COLOR, highlightthickness=1)
+        self.right_frame = tk.Frame(self.content_frame, bg=DARKER_BG, padx=15, pady=15,
+                                   highlightbackground=BORDER_COLOR, highlightthickness=1)
 
         self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -50,6 +98,50 @@ class LSLGui:
         
         # Set up window close handler
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+    def configure_theme(self):
+        """Configure the ttk theme for a modern look"""
+        style = ttk.Style()
+        
+        # Configure TButton style
+        style.configure(
+            "TButton",
+            background=DARKER_BG,
+            foreground=TEXT_COLOR,
+            borderwidth=0,
+            focusthickness=3,
+            focuscolor=ACCENT_COLOR,
+            padding=(10, 5)
+        )
+        
+        # Configure TCombobox style
+        style.configure(
+            "TCombobox",
+            background=DARKER_BG,
+            fieldbackground=DARKER_BG,
+            foreground=TEXT_COLOR,
+            arrowcolor=ACCENT_COLOR,
+            borderwidth=1,
+            padding=5
+        )
+        
+        # Configure TEntry style
+        style.configure(
+            "TEntry",
+            fieldbackground=DARKER_BG,
+            foreground=TEXT_COLOR,
+            borderwidth=1,
+            padding=5
+        )
+        
+        # Configure TScrollbar style
+        style.configure(
+            "TScrollbar",
+            background=DARKER_BG,
+            troughcolor=DARK_BG,
+            borderwidth=0,
+            arrowsize=13
+        )
         
     def on_closing(self):
         """Handle window closing event"""
@@ -110,56 +202,205 @@ class PolarStreamRecorder:
         return self.stdout_original.flush()
 
     def setup_ui(self):
-        tk.Label(self.parent, text="Polar H10 Recorder", font=("Helvetica", 48, "bold"), bg="#f0f0f0").pack(pady=10)
+        # Section title with icon-like prefix
+        title_frame = tk.Frame(self.parent, bg=DARKER_BG)
+        title_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        section_title = tk.Label(
+            title_frame, 
+            text="◉ RECORDING MODULE", 
+            font=("Segoe UI", 16, "bold"), 
+            fg=ACCENT_COLOR, 
+            bg=DARKER_BG,
+            anchor="w"
+        )
+        section_title.pack(fill=tk.X)
 
-        self.participant_id_label = tk.Label(self.parent, text="Participant ID:", bg="#f0f0f0")
-        self.participant_id_label.pack()
-        self.participant_id_entry = tk.Entry(self.parent, font=("Helvetica", 32))
-        self.participant_id_entry.pack(pady=5)
+        # Participant ID section with modern styling
+        participant_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
+        participant_frame.pack(fill=tk.X)
+        
+        self.participant_id_label = tk.Label(
+            participant_frame, 
+            text="PARTICIPANT ID", 
+            font=("Segoe UI", 10), 
+            bg=DARKER_BG, 
+            fg=SECONDARY_TEXT,
+            anchor="w"
+        )
+        self.participant_id_label.pack(fill=tk.X)
+        
+        self.participant_id_entry = tk.Entry(
+            participant_frame, 
+            font=("Segoe UI", 14),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,  # Cursor color
+            relief=tk.FLAT,
+            highlightbackground=BORDER_COLOR,
+            highlightthickness=1
+        )
+        self.participant_id_entry.pack(fill=tk.X, pady=(5, 0))
 
-        # Device selection frame
-        self.device_frame = tk.Frame(self.parent, bg="#f0f0f0")
-        self.device_frame.pack(pady=5, fill=tk.X)
+        # Device selection frame with modern styling
+        self.device_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
+        self.device_frame.pack(fill=tk.X)
 
-        self.device_label = tk.Label(self.device_frame, text="Select Polar Device:", bg="#f0f0f0")
-        self.device_label.pack(side=tk.LEFT, padx=5)
+        self.device_label = tk.Label(
+            self.device_frame, 
+            text="POLAR DEVICE", 
+            font=("Segoe UI", 10), 
+            bg=DARKER_BG, 
+            fg=SECONDARY_TEXT,
+            anchor="w"
+        )
+        self.device_label.pack(fill=tk.X)
 
+        device_selection_frame = tk.Frame(self.device_frame, bg=DARKER_BG)
+        device_selection_frame.pack(fill=tk.X)
+        
         self.device_var = tk.StringVar()
-        self.device_dropdown = ttk.Combobox(self.device_frame, textvariable=self.device_var, state="readonly", font=("Helvetica", 16), width=30)
-        self.device_dropdown.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.device_dropdown = ttk.Combobox(
+            device_selection_frame, 
+            textvariable=self.device_var, 
+            state="readonly", 
+            font=("Segoe UI", 12), 
+            width=30
+        )
+        self.device_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        self.scan_button = tk.Button(self.device_frame, text="Scan", font=("Helvetica", 16), command=self.scan_devices)
-        self.scan_button.pack(side=tk.RIGHT, padx=5)
+        self.scan_button = tk.Button(
+            device_selection_frame, 
+            text="SCAN", 
+            font=("Segoe UI", 10, "bold"),
+            bg=ACCENT_COLOR,
+            fg=DARKER_BG,
+            activebackground=DARK_BG,
+            activeforeground=ACCENT_COLOR,
+            relief=tk.FLAT,
+            padx=15,
+            pady=5,
+            command=self.scan_devices
+        )
+        self.scan_button.pack(side=tk.RIGHT, padx=(10, 0))
 
-        self.connect_button = tk.Button(self.parent, text="Connect", font=("Helvetica", 32),
-                                        command=self.connect_to_device)
-        self.connect_button.pack(pady=5, fill=tk.X)
+        # Action buttons with modern styling
+        button_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
+        button_frame.pack(fill=tk.X)
+        
+        self.connect_button = tk.Button(
+            button_frame, 
+            text="CONNECT", 
+            font=("Segoe UI", 12, "bold"),
+            bg=ACCENT_COLOR,
+            fg=DARKER_BG,
+            activebackground=DARK_BG,
+            activeforeground=ACCENT_COLOR,
+            relief=tk.FLAT,
+            padx=20,
+            pady=10,
+            command=self.connect_to_device
+        )
+        self.connect_button.pack(fill=tk.X, pady=5)
 
-        self.start_button = tk.Button(self.parent, text="Start Recording", font=("Helvetica", 32), state=tk.DISABLED,
-                                      command=self.toggle_recording)
-        self.start_button.pack(pady=5, fill=tk.X)
+        self.start_button = tk.Button(
+            button_frame, 
+            text="START RECORDING", 
+            font=("Segoe UI", 12, "bold"),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            activebackground=DARKER_BG,
+            activeforeground=TEXT_COLOR,
+            relief=tk.FLAT,
+            padx=20,
+            pady=10,
+            state=tk.DISABLED,
+            command=self.toggle_recording
+        )
+        self.start_button.pack(fill=tk.X, pady=5)
 
-        self.mark_button = tk.Button(self.parent, text="Mark Timestamp", font=("Helvetica", 32), state=tk.DISABLED,
-                                     command=self.mark_timestamp)
-        self.mark_button.pack(pady=5, fill=tk.X)
+        self.mark_button = tk.Button(
+            button_frame, 
+            text="MARK TIMESTAMP", 
+            font=("Segoe UI", 12, "bold"),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            activebackground=DARKER_BG,
+            activeforeground=TEXT_COLOR,
+            relief=tk.FLAT,
+            padx=20,
+            pady=10,
+            state=tk.DISABLED,
+            command=self.mark_timestamp
+        )
+        self.mark_button.pack(fill=tk.X, pady=5)
 
-        # Add status label
-        self.status_label = tk.Label(self.parent, textvariable=self.status_var, font=("Helvetica", 16), bg="#f0f0f0")
-        self.status_label.pack(pady=5)
+        # Status indicator with modern styling
+        status_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=5)
+        status_frame.pack(fill=tk.X)
+        
+        self.status_label = tk.Label(
+            status_frame, 
+            textvariable=self.status_var, 
+            font=("Segoe UI", 10), 
+            bg=DARKER_BG,
+            fg=SECONDARY_TEXT,
+            anchor="w"
+        )
+        self.status_label.pack(fill=tk.X)
 
-        # Add console output
-        console_frame = tk.Frame(self.parent, bg="#f0f0f0")
-        console_frame.pack(pady=5, fill=tk.X)
+        # Console output with modern styling
+        console_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
+        console_frame.pack(fill=tk.X)
 
-        tk.Label(console_frame, text="Console Output:", bg="#f0f0f0", font=("Helvetica", 12)).pack(anchor=tk.W)
-        self.console = scrolledtext.ScrolledText(console_frame, height=5, width=50, font=("Courier", 10))
-        self.console.pack(fill=tk.X, expand=True)
+        console_header = tk.Label(
+            console_frame, 
+            text="CONSOLE OUTPUT", 
+            font=("Segoe UI", 10), 
+            bg=DARKER_BG, 
+            fg=SECONDARY_TEXT,
+            anchor="w"
+        )
+        console_header.pack(fill=tk.X)
+        
+        self.console = scrolledtext.ScrolledText(
+            console_frame, 
+            height=5, 
+            font=("Cascadia Code", 9),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
+            relief=tk.FLAT,
+            highlightbackground=BORDER_COLOR,
+            highlightthickness=1
+        )
+        self.console.pack(fill=tk.X, expand=True, pady=(5, 0))
 
         print("Application started. Ready to connect to Polar H10.")
 
-        self.figure, self.ax1 = plt.subplots(figsize=(8, 6))
+        # Plot with dark theme
+        plt.style.use('dark_background')
+        self.figure, self.ax1 = plt.subplots(figsize=(8, 4))
+        self.figure.patch.set_facecolor(DARKER_BG)
+        
+        self.ax1.set_facecolor(DARK_BG)
+        self.ax1.tick_params(colors=SECONDARY_TEXT)
+        self.ax1.spines['bottom'].set_color(BORDER_COLOR)
+        self.ax1.spines['top'].set_color(BORDER_COLOR) 
+        self.ax1.spines['right'].set_color(BORDER_COLOR)
+        self.ax1.spines['left'].set_color(BORDER_COLOR)
+        
         self.ax2 = self.ax1.twinx()  # Create a second y-axis
-        self.figure.suptitle("Live HR & RR Data", fontsize=28)
+        self.ax2.tick_params(colors=SECONDARY_TEXT)
+        self.ax2.spines['bottom'].set_color(BORDER_COLOR)
+        self.ax2.spines['top'].set_color(BORDER_COLOR) 
+        self.ax2.spines['right'].set_color(BORDER_COLOR)
+        self.ax2.spines['left'].set_color(BORDER_COLOR)
+        
+        self.figure.suptitle("Live HR & RR Data", fontsize=14, color=TEXT_COLOR)
+        
+        # Add a grid with low opacity
+        self.ax1.grid(True, linestyle='--', alpha=0.2)
 
         self.canvas_plot = FigureCanvasTkAgg(self.figure, master=self.parent)
         self.canvas_widget = self.canvas_plot.get_tk_widget()
@@ -284,13 +525,43 @@ class PolarStreamRecorder:
 
     def _connect_thread(self):
         try:
-            self.connect_button.config(text="Connecting...", state=tk.DISABLED)
+            # Update button appearance for connecting state
+            self.connect_button.config(
+                text="CONNECTING...", 
+                state=tk.DISABLED,
+                bg=WARNING_COLOR,
+                fg=DARKER_BG
+            )
+            
             self.loop.run_until_complete(self._connect_to_polar())
             
-            # Enable recording button and mark button
-            self.start_button.config(state=tk.NORMAL)
-            self.mark_button.config(state=tk.NORMAL)
-            self.connect_button.config(text="Disconnect", command=self.disconnect_from_device)
+            # Enable recording button and mark button with dark theme styling
+            self.start_button.config(
+                state=tk.NORMAL,
+                bg=DARK_BG,
+                fg=TEXT_COLOR,
+                activebackground=DARKER_BG,
+                activeforeground=TEXT_COLOR
+            )
+            
+            self.mark_button.config(
+                state=tk.NORMAL,
+                bg=DARK_BG,
+                fg=TEXT_COLOR,
+                activebackground=DARKER_BG,
+                activeforeground=TEXT_COLOR
+            )
+            
+            # Update connect button to disconnect button with dark theme styling
+            self.connect_button.config(
+                text="DISCONNECT", 
+                state=tk.NORMAL,
+                command=self.disconnect_from_device,
+                bg=ERROR_COLOR,
+                fg=DARKER_BG,
+                activebackground=DARK_BG,
+                activeforeground=ERROR_COLOR
+            )
 
             # Start a periodic data request to ensure preview data is continuously received
             threading.Thread(target=self._periodic_data_request, daemon=True).start()
@@ -303,7 +574,15 @@ class PolarStreamRecorder:
             messagebox.showinfo("Connected", "Connected to Polar H10 successfully! Data preview has started automatically.")
         except Exception as e:
             messagebox.showerror("Connection Error", f"Failed to connect: {str(e)}")
-            self.connect_button.config(text="Connect", state=tk.NORMAL)
+            # Reset connect button with dark theme styling
+            self.connect_button.config(
+                text="CONNECT", 
+                state=tk.NORMAL,
+                bg=ACCENT_COLOR,
+                fg=DARKER_BG,
+                activebackground=DARK_BG,
+                activeforeground=ACCENT_COLOR
+            )
             
     def _schedule_plot_updates(self):
         """Schedule regular plot updates"""
@@ -719,8 +998,18 @@ class PolarStreamRecorder:
                 # Set recording flags
                 self.recording = True
                 self.recording_event.set()
-                self.start_button.config(text="Stop Recording")
-                self.status_var.set(f"Status: Connected | RECORDING")
+                
+                # Update button appearance for recording state
+                self.start_button.config(
+                    text="STOP RECORDING",
+                    bg=ERROR_COLOR,
+                    fg=DARKER_BG,
+                    activebackground=DARK_BG,
+                    activeforeground=ERROR_COLOR
+                )
+                
+                # Update status with recording indicator
+                self.status_var.set(f"Status: Connected | ● RECORDING")
                 print("Recording started successfully")
 
                 # Force an immediate plot update to show recording state
@@ -730,9 +1019,28 @@ class PolarStreamRecorder:
                 messagebox.showerror("Recording Error", f"Failed to start recording: {str(e)}")
                 self.recording = False
                 self.recording_event.clear()
-                self.start_button.config(text="Start Recording")
+                
+                # Reset button appearance
+                self.start_button.config(
+                    text="START RECORDING",
+                    bg=DARK_BG,
+                    fg=TEXT_COLOR,
+                    activebackground=DARKER_BG,
+                    activeforeground=TEXT_COLOR
+                )
         else:
+            # Stop recording and update UI
             self.stop_recording()
+            
+            # Reset button appearance
+            self.start_button.config(
+                text="START RECORDING",
+                bg=DARK_BG,
+                fg=TEXT_COLOR,
+                activebackground=DARKER_BG,
+                activeforeground=TEXT_COLOR
+            )
+            
             self.status_var.set(f"Status: Connected | Recording stopped")
 
     def _setup_recording_files(self):
@@ -793,10 +1101,13 @@ class PolarStreamRecorder:
             print(f"Error monitoring recording: {str(e)}")
 
     def stop_recording(self):
+        # Store the recording stop time
+        self.recording_stop_time = local_clock()
+        print(f"Recording stop time: {self.recording_stop_time}")
+        
         self.recording = False
         self.recording_event.clear()
-        self.start_button.config(text="Start Recording")
-
+        
         # Close file handles if they're open
         self._close_recording_files()
 
@@ -804,6 +1115,9 @@ class PolarStreamRecorder:
 
         # Verify the recording files
         self._verify_recording_files()
+        
+        # Force an immediate plot update to show the stop line
+        self.update_plot()
 
     def _close_recording_files(self):
         """Close any open file handles"""
@@ -900,6 +1214,17 @@ class PolarStreamRecorder:
             has_rr_data = False
             current_time = local_clock()
 
+            # Set dark theme styling for the plot
+            self.ax1.set_facecolor(DARK_BG)
+            self.ax2.set_facecolor(DARK_BG)
+            
+            self.ax1.tick_params(colors=SECONDARY_TEXT)
+            self.ax2.tick_params(colors=SECONDARY_TEXT)
+            
+            for spine in ['bottom', 'top', 'right', 'left']:
+                self.ax1.spines[spine].set_color(BORDER_COLOR)
+                self.ax2.spines[spine].set_color(BORDER_COLOR)
+
             # Plot heart rate data
             if 'HeartRate' in self.data_buffers and self.data_buffers['HeartRate']:
                 # Limit to last 100 seconds of data
@@ -914,17 +1239,17 @@ class PolarStreamRecorder:
                         # Plot pre-recording data in lighter color
                         if pre_recording_hr:
                             timestamps_pre, values_pre = zip(*pre_recording_hr)
-                            self.ax1.plot(timestamps_pre, values_pre, 'b-', alpha=0.3, linewidth=1.0, label='Preview HR')
+                            self.ax1.plot(timestamps_pre, values_pre, color=SECONDARY_TEXT, alpha=0.3, linewidth=1.0, label='Preview HR')
 
                         # Plot recording data in bold
                         if recording_hr:
                             timestamps_rec, values_rec = zip(*recording_hr)
-                            self.ax1.plot(timestamps_rec, values_rec, 'b-', linewidth=2.0, label='Recording HR')
+                            self.ax1.plot(timestamps_rec, values_rec, color=ACCENT_COLOR, linewidth=2.0, label='Recording HR')
                             has_hr_data = True
                     else:
                         # Regular display for preview mode
                         timestamps_hr, values_hr = zip(*hr_data)
-                        self.ax1.plot(timestamps_hr, values_hr, 'b-', label='Heart Rate', linewidth=1.5)
+                        self.ax1.plot(timestamps_hr, values_hr, color=ACCENT_COLOR, label='Heart Rate', linewidth=1.5)
                         has_hr_data = True
 
                     # Set y-axis limits with some padding to prevent jumping
@@ -935,8 +1260,8 @@ class PolarStreamRecorder:
                             max_val = max(all_values) + 5
                             self.ax1.set_ylim(min_val, max_val)
 
-                self.ax1.set_ylabel('Heart Rate (bpm)', color='b', labelpad=15, va='center')
-                self.ax1.tick_params(axis='y', labelcolor='b')
+                self.ax1.set_ylabel('Heart Rate (bpm)', color=ACCENT_COLOR, labelpad=15, va='center', fontsize=10)
+                self.ax1.tick_params(axis='y', labelcolor=ACCENT_COLOR)
 
             # Plot RR interval data
             if 'RRinterval' in self.data_buffers and self.data_buffers['RRinterval']:
@@ -952,17 +1277,17 @@ class PolarStreamRecorder:
                         # Plot pre-recording data in lighter color
                         if pre_recording_rr:
                             timestamps_pre, values_pre = zip(*pre_recording_rr)
-                            self.ax2.plot(timestamps_pre, values_pre, 'r-', alpha=0.3, linewidth=1.0, label='Preview RR')
+                            self.ax2.plot(timestamps_pre, values_pre, color=SECONDARY_TEXT, alpha=0.3, linewidth=1.0, label='Preview RR')
 
                         # Plot recording data in bold
                         if recording_rr:
                             timestamps_rec, values_rec = zip(*recording_rr)
-                            self.ax2.plot(timestamps_rec, values_rec, 'r-', linewidth=2.0, label='Recording RR')
+                            self.ax2.plot(timestamps_rec, values_rec, color=SUCCESS_COLOR, linewidth=2.0, label='Recording RR')
                             has_rr_data = True
                     else:
                         # Regular display for preview mode
                         timestamps_rr, values_rr = zip(*rr_data)
-                        self.ax2.plot(timestamps_rr, values_rr, 'r-', label='RR Interval', linewidth=1.5)
+                        self.ax2.plot(timestamps_rr, values_rr, color=SUCCESS_COLOR, label='RR Interval', linewidth=1.5)
                         has_rr_data = True
 
                     # Set y-axis limits with some padding to prevent jumping
@@ -973,27 +1298,72 @@ class PolarStreamRecorder:
                             max_val = max(all_values) + 50
                             self.ax2.set_ylim(min_val, max_val)
 
-                self.ax2.set_ylabel('RR Interval (ms)', color='r', labelpad=15, ha='right', va='center')
+                self.ax2.set_ylabel('RR Interval (ms)', color=SUCCESS_COLOR, labelpad=15, ha='right', va='center', fontsize=10)
                 self.ax2.yaxis.set_label_position("right")
-                self.ax2.tick_params(axis='y', labelcolor='r')
+                self.ax2.tick_params(axis='y', labelcolor=SUCCESS_COLOR)
 
             # Set x-axis limits to prevent horizontal jumping
             if has_hr_data or has_rr_data:
                 self.ax1.set_xlim(current_time - 100, current_time)
 
-            self.ax1.set_xlabel("Time (Last 100s)")
-            self.ax1.grid(True, linestyle='--', alpha=0.6)
+            self.ax1.set_xlabel("Time (Last 100s)", color=SECONDARY_TEXT, fontsize=10)
+            self.ax1.grid(True, linestyle='--', alpha=0.2, color=BORDER_COLOR)
 
-            # Add a legend if recording to show the difference between preview and recording data
+            # Create combined legend with both HR and RR data
             if self.recording:
-                self.ax1.legend(loc='upper left')
-                self.ax2.legend(loc='upper right')
+                # Create a list of legend handles and labels from both axes
+                handles1, labels1 = self.ax1.get_legend_handles_labels()
+                handles2, labels2 = self.ax2.get_legend_handles_labels()
+                
+                # Combine them and create a single legend
+                legend = self.ax1.legend(
+                    handles1 + handles2, 
+                    labels1 + labels2, 
+                    loc='upper left', 
+                    facecolor=DARKER_BG, 
+                    edgecolor=BORDER_COLOR
+                )
+                
+                for text in legend.get_texts():
+                    text.set_color(TEXT_COLOR)
+            else:
+                # For preview mode, also show both HR and RR in legend
+                handles1, labels1 = self.ax1.get_legend_handles_labels()
+                handles2, labels2 = self.ax2.get_legend_handles_labels()
+                
+                if handles1 or handles2:
+                    legend = self.ax1.legend(
+                        handles1 + handles2, 
+                        labels1 + labels2, 
+                        loc='upper left', 
+                        facecolor=DARKER_BG, 
+                        edgecolor=BORDER_COLOR
+                    )
+                    
+                    for text in legend.get_texts():
+                        text.set_color(TEXT_COLOR)
 
             # Add a vertical line at recording start time if recording
             if self.recording and hasattr(self, 'recording_start_time'):
                 if current_time - self.recording_start_time <= 100:  # Only if recording start is within view
-                    self.ax1.axvline(x=self.recording_start_time, color='g', linestyle='--', 
-                                    label='Recording Start')
+                    self.ax1.axvline(
+                        x=self.recording_start_time, 
+                        color=SUCCESS_COLOR, 
+                        linestyle='--', 
+                        alpha=0.8,
+                        label='Recording Start'
+                    )
+            
+            # Add a vertical line at recording stop time if available
+            if hasattr(self, 'recording_stop_time') and not self.recording:
+                if current_time - self.recording_stop_time <= 100:  # Only if stop time is within view
+                    self.ax1.axvline(
+                        x=self.recording_stop_time, 
+                        color=ERROR_COLOR, 
+                        linestyle='--', 
+                        alpha=0.8,
+                        label='Recording Stop'
+                    )
 
             # Add marked timestamps as vertical lines
             for ts in self.marked_timestamps:
@@ -1186,15 +1556,43 @@ class PolarStreamRecorder:
 
     def _disconnect_thread(self):
         try:
-            self.connect_button.config(text="Disconnecting...", state=tk.DISABLED)
+            # Update button appearance for disconnecting state
+            self.connect_button.config(
+                text="DISCONNECTING...", 
+                state=tk.DISABLED,
+                bg=WARNING_COLOR,
+                fg=DARKER_BG
+            )
 
             if self.client and self.client.is_connected:
                 self.loop.run_until_complete(self._disconnect_from_polar())
 
             self.connected = False
-            self.start_button.config(state=tk.DISABLED)
-            self.mark_button.config(state=tk.DISABLED)
-            self.connect_button.config(text="Connect", state=tk.NORMAL, command=self.connect_to_device)
+            
+            # Disable buttons with dark theme styling
+            self.start_button.config(
+                state=tk.DISABLED,
+                bg=DARK_BG,
+                fg=SECONDARY_TEXT
+            )
+            
+            self.mark_button.config(
+                state=tk.DISABLED,
+                bg=DARK_BG,
+                fg=SECONDARY_TEXT
+            )
+            
+            # Reset connect button with dark theme styling
+            self.connect_button.config(
+                text="CONNECT", 
+                state=tk.NORMAL, 
+                command=self.connect_to_device,
+                bg=ACCENT_COLOR,
+                fg=DARKER_BG,
+                activebackground=DARK_BG,
+                activeforeground=ACCENT_COLOR
+            )
+            
             self.status_var.set("Status: Disconnected")
             
             # Close any open file handles
@@ -1203,7 +1601,16 @@ class PolarStreamRecorder:
             messagebox.showinfo("Disconnected", "Disconnected from Polar H10")
         except Exception as e:
             messagebox.showerror("Disconnection Error", f"Error during disconnection: {str(e)}")
-            self.connect_button.config(text="Connect", state=tk.NORMAL, command=self.connect_to_device)
+            # Reset connect button with dark theme styling
+            self.connect_button.config(
+                text="CONNECT", 
+                state=tk.NORMAL, 
+                command=self.connect_to_device,
+                bg=ACCENT_COLOR,
+                fg=DARKER_BG,
+                activebackground=DARK_BG,
+                activeforeground=ACCENT_COLOR
+            )
 
     async def _disconnect_from_polar(self):
         """Disconnect from the Polar device"""
@@ -1232,21 +1639,93 @@ class LSLDataAnalyzer:
         self.setup_ui()
 
     def setup_ui(self):
-        tk.Label(self.parent, text="Data Analyzer", font=("Helvetica", 32, "bold"), bg="#ffffff").pack(pady=10)
+        # Section title with icon-like prefix
+        title_frame = tk.Frame(self.parent, bg=DARKER_BG)
+        title_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        section_title = tk.Label(
+            title_frame, 
+            text="◉ ANALYSIS MODULE", 
+            font=("Segoe UI", 16, "bold"), 
+            fg=ACCENT_COLOR, 
+            bg=DARKER_BG,
+            anchor="w"
+        )
+        section_title.pack(fill=tk.X)
 
-        # Participant ID
-        self.participant_id_label = tk.Label(self.parent, text="Participant ID:", bg="#ffffff")
-        self.participant_id_label.pack()
-        self.participant_id_entry = tk.Entry(self.parent, font=("Helvetica", 24))
-        self.participant_id_entry.pack(pady=5)
+        # Participant ID section with modern styling
+        participant_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
+        participant_frame.pack(fill=tk.X)
+        
+        self.participant_id_label = tk.Label(
+            participant_frame, 
+            text="PARTICIPANT ID", 
+            font=("Segoe UI", 10), 
+            bg=DARKER_BG, 
+            fg=SECONDARY_TEXT,
+            anchor="w"
+        )
+        self.participant_id_label.pack(fill=tk.X)
+        
+        self.participant_id_entry = tk.Entry(
+            participant_frame, 
+            font=("Segoe UI", 14),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,  # Cursor color
+            relief=tk.FLAT,
+            highlightbackground=BORDER_COLOR,
+            highlightthickness=1
+        )
+        self.participant_id_entry.pack(fill=tk.X, pady=(5, 0))
 
-        # Load Data Button
-        self.load_button = tk.Button(self.parent, text="Load Data", font=("Helvetica", 24), command=self.load_data)
-        self.load_button.pack(pady=5, fill=tk.X)
+        # Load Data Button with modern styling
+        button_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
+        button_frame.pack(fill=tk.X)
+        
+        self.load_button = tk.Button(
+            button_frame, 
+            text="LOAD DATA", 
+            font=("Segoe UI", 12, "bold"),
+            bg=ACCENT_COLOR,
+            fg=DARKER_BG,
+            activebackground=DARK_BG,
+            activeforeground=ACCENT_COLOR,
+            relief=tk.FLAT,
+            padx=20,
+            pady=10,
+            command=self.load_data
+        )
+        self.load_button.pack(fill=tk.X, pady=5)
 
-        # Results Display
-        self.results_text = tk.Text(self.parent, wrap=tk.WORD, font=("Helvetica", 24), height=15)
-        self.results_text.pack(pady=5, fill=tk.BOTH, expand=True)
+        # Results Display with modern styling
+        results_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
+        results_frame.pack(fill=tk.BOTH, expand=True)
+        
+        results_header = tk.Label(
+            results_frame, 
+            text="ANALYSIS RESULTS", 
+            font=("Segoe UI", 10), 
+            bg=DARKER_BG, 
+            fg=SECONDARY_TEXT,
+            anchor="w"
+        )
+        results_header.pack(fill=tk.X)
+        
+        self.results_text = tk.Text(
+            results_frame, 
+            wrap=tk.WORD, 
+            font=("Segoe UI", 12),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
+            relief=tk.FLAT,
+            highlightbackground=BORDER_COLOR,
+            highlightthickness=1,
+            padx=10,
+            pady=10
+        )
+        self.results_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
 
     def load_data(self):
         self.results_text.delete(1.0, tk.END)
