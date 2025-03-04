@@ -12,3 +12,5 @@ dependencies:
       - keyboard
       - pylsl
       - csv
+      - bleak>=0.19.0
+      - asyncio

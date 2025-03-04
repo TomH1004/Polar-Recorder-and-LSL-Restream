@@ -2,55 +2,134 @@ import threading
 import csv
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
-from pylsl import StreamInlet, resolve_stream, local_clock
+from tkinter import messagebox, ttk, scrolledtext
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 import os
+import asyncio
+import struct
+import sys
+from datetime import datetime
+from bleak import BleakClient, BleakScanner
+from pylsl import local_clock
+
+# Polar H10 UUIDs
+HEART_RATE_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"
+PMD_SERVICE = "FB005C80-02E7-F387-1CAD-8ACD2D8DF0C8"
+PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"
+PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"
+BATTERY_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb"
+BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"
+
+# Client Configuration Descriptor UUID (for enabling notifications)
+CLIENT_CHAR_CONFIG = "00002902-0000-1000-8000-00805f9b34fb"
+
+# PMD Control Commands
+PMD_COMMAND = bytearray([0x01, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
 
 
 class LSLGui:
     def __init__(self, master):
         self.master = master
-        self.master.title("LSL Recorder & Analyzer")
+        self.master.title("Polar H10 Recorder & Analyzer")
         self.master.geometry("2100x1050")
         self.master.configure(bg="#eaeaea")
 
+        # Set up the main frames
         self.left_frame = tk.Frame(master, padx=10, pady=10, bg="#f0f0f0")
         self.right_frame = tk.Frame(master, padx=10, pady=10, bg="#ffffff")
 
         self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.recorder = LSLStreamRecorder(self.left_frame)
+        # Create the recorder and analyzer components
+        self.recorder = PolarStreamRecorder(self.left_frame)
         self.analyzer = LSLDataAnalyzer(self.right_frame)
+        
+        # Set up window close handler
+        self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+    def on_closing(self):
+        """Handle window closing event"""
+        try:
+            # Disconnect from device if connected
+            if hasattr(self.recorder, 'connected') and self.recorder.connected:
+                self.recorder.disconnect_from_device()
+                
+            # Wait a moment for disconnection to complete
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"Error during shutdown: {str(e)}")
+        finally:
+            # Destroy the window
+            self.master.destroy()
 
 
-class LSLStreamRecorder:
+class PolarStreamRecorder:
     def __init__(self, parent):
         self.parent = parent
         self.recording = False
         self.recording_event = threading.Event()
+        self.data_received = False  # Flag to track if data is being received
         self.stop_event = threading.Event()
-        self.streams = [
-            ('HeartRate', 'ExciteOMeter', 10, 'float32'),
-            ('RRinterval', 'ExciteOMeter', 10, 'float32')
-        ]
-        self.inlets = {}
-        self.data_buffers = {stream[0]: [] for stream in self.streams}
+        self.recording_start_time = None  # Track when recording started
+        self.connected = False
+        self.client = None
+        self.device_address = None
+        self.data_buffers = {
+            'HeartRate': [],
+            'RRinterval': []
+        }
         self.marked_timestamps = []
         self.participant_folder = None
+        self.loop = asyncio.new_event_loop()
+        self.plot_update_scheduled = False  # Flag to track if plot updates are scheduled
+
+        # Create a status label
+        self.status_var = tk.StringVar()
+        self.status_var.set("Status: Not connected")
+
+        # Redirect stdout to our console
+        self.stdout_original = sys.stdout
+        sys.stdout = self
 
         self.setup_ui()
 
+    def write(self, text):
+        """Redirect stdout to our console"""
+        if hasattr(self, 'console'):
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.parent.after(0, lambda: self.console.insert(tk.END, f"[{timestamp}] {text}"))
+            self.parent.after(0, lambda: self.console.see(tk.END))
+        return self.stdout_original.write(text)
+
+    def flush(self):
+        """Required for stdout redirection"""
+        return self.stdout_original.flush()
+
     def setup_ui(self):
-        tk.Label(self.parent, text="LSL Stream Recorder", font=("Helvetica", 48, "bold"), bg="#f0f0f0").pack(pady=10)
+        tk.Label(self.parent, text="Polar H10 Recorder", font=("Helvetica", 48, "bold"), bg="#f0f0f0").pack(pady=10)
 
         self.participant_id_label = tk.Label(self.parent, text="Participant ID:", bg="#f0f0f0")
         self.participant_id_label.pack()
         self.participant_id_entry = tk.Entry(self.parent, font=("Helvetica", 32))
         self.participant_id_entry.pack(pady=5)
+
+        # Device selection frame
+        self.device_frame = tk.Frame(self.parent, bg="#f0f0f0")
+        self.device_frame.pack(pady=5, fill=tk.X)
+
+        self.device_label = tk.Label(self.device_frame, text="Select Polar Device:", bg="#f0f0f0")
+        self.device_label.pack(side=tk.LEFT, padx=5)
+
+        self.device_var = tk.StringVar()
+        self.device_dropdown = ttk.Combobox(self.device_frame, textvariable=self.device_var, state="readonly", font=("Helvetica", 16), width=30)
+        self.device_dropdown.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        self.scan_button = tk.Button(self.device_frame, text="Scan", font=("Helvetica", 16), command=self.scan_devices)
+        self.scan_button.pack(side=tk.RIGHT, padx=5)
 
         self.connect_button = tk.Button(self.parent, text="Connect", font=("Helvetica", 32),
                                         command=self.connect_to_device)
@@ -64,6 +143,20 @@ class LSLStreamRecorder:
                                      command=self.mark_timestamp)
         self.mark_button.pack(pady=5, fill=tk.X)
 
+        # Add status label
+        self.status_label = tk.Label(self.parent, textvariable=self.status_var, font=("Helvetica", 16), bg="#f0f0f0")
+        self.status_label.pack(pady=5)
+
+        # Add console output
+        console_frame = tk.Frame(self.parent, bg="#f0f0f0")
+        console_frame.pack(pady=5, fill=tk.X)
+
+        tk.Label(console_frame, text="Console Output:", bg="#f0f0f0", font=("Helvetica", 12)).pack(anchor=tk.W)
+        self.console = scrolledtext.ScrolledText(console_frame, height=5, width=50, font=("Courier", 10))
+        self.console.pack(fill=tk.X, expand=True)
+
+        print("Application started. Ready to connect to Polar H10.")
+
         self.figure, self.ax1 = plt.subplots(figsize=(8, 6))
         self.ax2 = self.ax1.twinx()  # Create a second y-axis
         self.figure.suptitle("Live HR & RR Data", fontsize=28)
@@ -74,56 +167,712 @@ class LSLStreamRecorder:
 
         self.update_plot()
 
+    def scan_devices(self):
+        self.scan_button.config(text="Scanning...", state=tk.DISABLED)
+        threading.Thread(target=self._scan_devices_thread, daemon=True).start()
+
+    def _scan_devices_thread(self):
+        try:
+            devices = self.loop.run_until_complete(self._scan_for_polar_devices())
+            self.device_dropdown['values'] = devices
+            if devices:
+                self.device_dropdown.current(0)
+            messagebox.showinfo("Scan Complete", f"Found {len(devices)} Polar devices")
+        except Exception as e:
+            messagebox.showerror("Scan Error", f"Error scanning for devices: {str(e)}")
+        finally:
+            self.scan_button.config(text="Scan", state=tk.NORMAL)
+
+    async def _scan_for_polar_devices(self):
+        devices = []
+        scanner = BleakScanner()
+        discovered_devices = await scanner.discover(timeout=5.0)
+
+        for device in discovered_devices:
+            if device.name and ("Polar" in device.name or "polar" in device.name):
+                devices.append(f"{device.name} ({device.address})")
+
+        return devices
+
     def connect_to_device(self):
         participant_id = self.participant_id_entry.get().strip()
         if not participant_id:
             messagebox.showwarning("Participant ID Missing", "Please enter a Participant ID.")
             return
 
-        self.participant_folder = os.path.join("Participant_Data", f"Participant_{participant_id}")
-        os.makedirs(self.participant_folder, exist_ok=True)
-
-        # Resolve all available LSL streams
-        available_streams = resolve_stream()
-
-        for stream_name, stream_type, _, _ in self.streams:
-            for stream in available_streams:
-                inlet = StreamInlet(stream)
-                stream_info = inlet.info()
-
-                # Match both the type and name to ensure correctness
-                if stream_info.type() == stream_type and stream_info.name() == stream_name:
-                    self.inlets[stream_name] = inlet
-                    break  # Stop searching once we find the correct stream
-
-        if not self.inlets:
-            messagebox.showerror("No Streams Found", "No matching LSL streams were found.")
+        selected_device = self.device_var.get()
+        if not selected_device:
+            messagebox.showwarning("Device Not Selected", "Please select a Polar device.")
             return
 
-        self.start_button.config(state=tk.NORMAL)
-        self.mark_button.config(state=tk.NORMAL)
-        messagebox.showinfo("Connected", "Device connected successfully!")
+        self.participant_folder = os.path.join("Participant_Data", f"Participant_{participant_id}")
+
+        # Check folder permissions before proceeding
+        if not self._check_folder_permissions():
+            return
+
+        os.makedirs(self.participant_folder, exist_ok=True)
+
+        # Extract device address from selection
+        self.device_address = selected_device.split("(")[1].split(")")[0]
+
+        # Start connection in a separate thread to avoid blocking the UI
+        threading.Thread(target=self._connect_thread, daemon=True).start()
+
+    def _check_folder_permissions(self):
+        """Check if we have permission to write to the participant folder"""
+        try:
+            # First check if the parent directory exists and is writable
+            parent_dir = os.path.dirname(self.participant_folder)
+            if not os.path.exists(parent_dir):
+                try:
+                    os.makedirs(parent_dir, exist_ok=True)
+                    print(f"Created parent directory: {parent_dir}")
+                except Exception as e:
+                    print(f"Error creating parent directory: {str(e)}")
+                    messagebox.showerror("Permission Error",
+                                        f"Cannot create the directory {parent_dir}.\n"
+                                        f"Please check if you have write permissions to the application folder.")
+                    return False
+
+            # Check if we can write to the parent directory
+            test_file = os.path.join(parent_dir, "permission_test.txt")
+            try:
+                with open(test_file, 'w') as f:
+                    f.write("Permission test")
+                os.remove(test_file)
+                print(f"Write permission test passed for {parent_dir}")
+            except Exception as e:
+                print(f"Error writing to parent directory: {str(e)}")
+                messagebox.showerror("Permission Error",
+                                    f"Cannot write to the directory {parent_dir}.\n"
+                                    f"Please check if you have write permissions to the application folder.")
+                return False
+
+            # Now check/create the participant folder
+            if not os.path.exists(self.participant_folder):
+                try:
+                    os.makedirs(self.participant_folder, exist_ok=True)
+                    print(f"Created participant directory: {self.participant_folder}")
+                except Exception as e:
+                    print(f"Error creating participant directory: {str(e)}")
+                    messagebox.showerror("Permission Error",
+                                        f"Cannot create the directory {self.participant_folder}.\n"
+                                        f"Please check if you have write permissions.")
+                    return False
+
+            # Check if we can write to the participant folder
+            test_file = os.path.join(self.participant_folder, "permission_test.txt")
+            try:
+                with open(test_file, 'w') as f:
+                    f.write("Permission test")
+                os.remove(test_file)
+                print(f"Write permission test passed for {self.participant_folder}")
+                return True
+            except Exception as e:
+                print(f"Error writing to participant folder: {str(e)}")
+                messagebox.showerror("Permission Error",
+                                    f"Cannot write to the directory {self.participant_folder}.\n"
+                                    f"Please check if you have write permissions.")
+                return False
+
+        except Exception as e:
+            print(f"Error checking folder permissions: {str(e)}")
+            messagebox.showerror("Permission Error",
+                                f"An error occurred while checking folder permissions: {str(e)}")
+            return False
+
+    def _connect_thread(self):
+        try:
+            self.connect_button.config(text="Connecting...", state=tk.DISABLED)
+            self.loop.run_until_complete(self._connect_to_polar())
+            
+            # Enable recording button and mark button
+            self.start_button.config(state=tk.NORMAL)
+            self.mark_button.config(state=tk.NORMAL)
+            self.connect_button.config(text="Disconnect", command=self.disconnect_from_device)
+
+            # Start a periodic data request to ensure preview data is continuously received
+            threading.Thread(target=self._periodic_data_request, daemon=True).start()
+            
+            # Start updating the plot immediately
+            self.update_plot()
+            # Schedule regular plot updates
+            self._schedule_plot_updates()
+
+            messagebox.showinfo("Connected", "Connected to Polar H10 successfully! Data preview has started automatically.")
+        except Exception as e:
+            messagebox.showerror("Connection Error", f"Failed to connect: {str(e)}")
+            self.connect_button.config(text="Connect", state=tk.NORMAL)
+            
+    def _schedule_plot_updates(self):
+        """Schedule regular plot updates"""
+        if self.connected:
+            self.update_plot()
+            # Update plot every 500ms
+            self.parent.after(500, self._schedule_plot_updates)
+
+    def _periodic_data_request(self):
+        """Periodically request data to ensure continuous data flow"""
+        while self.connected:
+            current_time = time.time()
+
+            # Check if we have recent data (within the last 3 seconds)
+            has_recent_data = False
+            if self.data_buffers['HeartRate']:
+                last_timestamp = self.data_buffers['HeartRate'][-1][0]
+                if current_time - last_timestamp < 3:
+                    has_recent_data = True
+
+            # If no recent data, request it
+            if not has_recent_data:
+                try:
+                    print("Requesting heart rate data...")
+                    threading.Thread(target=lambda: self._force_test_reading(preview_mode=True), daemon=True).start()
+                except Exception as e:
+                    print(f"Error requesting data: {str(e)}")
+
+            # Wait before next check
+            time.sleep(2)  # Check every 2 seconds
+
+    async def _connect_to_polar(self):
+        # Connect to the Polar H10
+        try:
+            print(f"Attempting to connect to device at address: {self.device_address}")
+
+            # Use a longer timeout for connection
+            self.client = BleakClient(self.device_address, timeout=20.0)
+            connected = await self.client.connect()
+
+            if not connected or not self.client.is_connected:
+                raise Exception("Failed to connect to device")
+
+            self.connected = True
+            self.status_var.set(f"Status: Connected to {self.device_address}")
+            print(f"Successfully connected to device at {self.device_address}")
+
+            # Get device info and services
+            try:
+                services = await self.client.get_services()
+                print(f"Available services:")
+                for service in services.services.values():
+                    print(f"Service: {service.uuid}")
+                    for char in service.characteristics:
+                        print(f"  Characteristic: {char.uuid}, Properties: {char.properties}")
+            except Exception as e:
+                print(f"Error getting device info: {str(e)}")
+
+            # Check battery level
+            try:
+                battery = await self.client.read_gatt_char(BATTERY_LEVEL)
+                battery_level = int(battery[0])
+                print(f"Battery level: {battery_level}%")
+                if battery_level < 15:
+                    print("WARNING: Battery level is low. This may affect data transmission.")
+                    # Show warning to user
+                    self.parent.after(0, lambda: messagebox.showwarning(
+                        "Low Battery",
+                        f"The Polar H10 battery level is low ({battery_level}%).\n"
+                        "This may affect data transmission. Consider charging the device."
+                    ))
+            except Exception as e:
+                print(f"Could not read battery level: {str(e)}")
+
+            # Set up notifications for heart rate using the proper approach
+            try:
+                print("Setting up heart rate notifications...")
+
+                # First, enable notifications by writing to the Client Characteristic Configuration Descriptor
+                # This is the proper way to enable notifications according to the Bluetooth GATT specification
+                hr_service = None
+                hr_char = None
+
+                # Find the heart rate service and characteristic
+                for service in services.services.values():
+                    if service.uuid.lower() == HEART_RATE_SERVICE.lower():
+                        hr_service = service
+                        for char in service.characteristics:
+                            if char.uuid.lower() == HEART_RATE_UUID.lower():
+                                hr_char = char
+                                break
+                        break
+
+                if hr_service and hr_char:
+                    print(f"Found heart rate service: {hr_service.uuid}")
+                    print(f"Found heart rate characteristic: {hr_char.uuid}")
+
+                    # Find the Client Characteristic Configuration Descriptor
+                    for descriptor in hr_char.descriptors:
+                        if descriptor.uuid.lower() == CLIENT_CHAR_CONFIG.lower():
+                            # Write 0x0100 to enable notifications (little endian)
+                            await self.client.write_gatt_descriptor(descriptor.handle, bytearray([0x01, 0x00]))
+                            print("Enabled heart rate notifications via descriptor")
+                            break
+
+                    # Register notification handler
+                    await self.client.start_notify(HEART_RATE_UUID, self._heart_rate_handler)
+                    print("Heart rate notifications enabled successfully")
+
+                    # Force an initial heart rate reading to verify connection
+                    threading.Thread(target=self._force_initial_reading, daemon=True).start()
+                else:
+                    print("Could not find heart rate service or characteristic")
+                    raise Exception("Heart rate service not found")
+
+            except Exception as e:
+                print(f"Error setting up heart rate notifications: {str(e)}")
+                print("Trying alternative approach...")
+
+                try:
+                    # Try the direct approach as fallback
+                    await self.client.start_notify(HEART_RATE_UUID, self._heart_rate_handler)
+                    print("Heart rate notifications enabled via direct method")
+
+                    # Force an initial heart rate reading to verify connection
+                    threading.Thread(target=self._force_initial_reading, daemon=True).start()
+                except Exception as e2:
+                    print(f"Alternative approach also failed: {str(e2)}")
+                    print("Please ensure the Polar H10 is properly worn and the chest strap is moistened")
+
+            # Enable ECG streaming (for RR intervals) - optional, don't fail if this doesn't work
+            try:
+                print("Setting up PMD data notifications...")
+                await self.client.write_gatt_char(PMD_CONTROL, PMD_COMMAND)
+                await self.client.start_notify(PMD_DATA, self._pmd_data_handler)
+                print("PMD data notifications enabled")
+            except Exception as e:
+                print(f"Error setting up PMD data: {str(e)}")
+                print("RR intervals may still be available from the heart rate service")
+
+            # Start a watchdog to check if we're receiving data
+            threading.Thread(target=self._data_watchdog, daemon=True).start()
+
+        except Exception as e:
+            self.connected = False
+            print(f"Connection failed: {str(e)}")
+            raise e
+
+    def _force_initial_reading(self):
+        """Force an initial heart rate reading to verify connection"""
+        try:
+            time.sleep(2)  # Wait for notifications to be set up
+            if not self.data_buffers['HeartRate']:
+                print("No heart rate data received yet, forcing a reading...")
+                self.loop.run_until_complete(self._force_heart_rate_reading_loop())
+        except Exception as e:
+            print(f"Error forcing initial reading: {str(e)}")
+
+    async def _force_heart_rate_reading_loop(self):
+        """Try multiple approaches to get heart rate data"""
+        try:
+            # Try reading the heart rate characteristic directly
+            try:
+                hr_value = await self._read_heart_rate()
+                if hr_value:
+                    print(f"Successfully read heart rate directly: {hr_value} bpm")
+                    return
+            except Exception as e:
+                print(f"Could not read heart rate directly: {str(e)}")
+
+            # Try restarting notifications
+            try:
+                await self._restart_notifications()
+            except Exception as e:
+                print(f"Error restarting notifications: {str(e)}")
+
+            # Try reading battery level to keep connection active
+            try:
+                battery = await self.client.read_gatt_char(BATTERY_LEVEL)
+                print(f"Read battery level to keep connection active: {int(battery[0])}%")
+            except Exception as e:
+                print(f"Error reading battery: {str(e)}")
+
+            # Try writing to the control characteristic to wake up the device
+            try:
+                # Write a dummy value to the control characteristic
+                await self.client.write_gatt_char(PMD_CONTROL, bytearray([0x01, 0x00]))
+                print("Wrote to control characteristic to wake up device")
+            except Exception as e:
+                print(f"Error writing to control: {str(e)}")
+
+        except Exception as e:
+            print(f"Error in force heart rate reading loop: {str(e)}")
+
+    def _data_watchdog(self):
+        """Check if we're receiving data from the device"""
+        time.sleep(5)  # Wait for initial connection
+
+        if not self.data_buffers['HeartRate']:
+            # No heart rate data received after 5 seconds
+            self.parent.after(0, lambda: self.status_var.set("Status: Connected but no data received. Check device placement."))
+            print("No heart rate data received after 5 seconds. Please check:")
+            print("1. Is the chest strap properly positioned and moistened?")
+            print("2. Is the Polar H10 sensor firmly attached to the strap?")
+            print("3. Is the battery level sufficient?")
+
+            # Try to force a reading
+            try:
+                print("Attempting to force a heart rate reading...")
+                threading.Thread(target=lambda: self._force_test_reading(preview_mode=False), daemon=True).start()
+            except Exception as e:
+                print(f"Error forcing heart rate reading: {str(e)}")
+
+        # Check every 15 seconds if data is still coming in (increased from 10 to reduce false warnings)
+        last_check_time = time.time()
+        last_data_count = len(self.data_buffers['HeartRate'])
+        consecutive_no_data = 0  # Count consecutive checks with no new data
+
+        while self.connected:
+            time.sleep(15)  # Increased from 10 seconds
+            current_time = time.time()
+            current_data_count = len(self.data_buffers['HeartRate'])
+
+            if current_data_count == last_data_count:
+                consecutive_no_data += 1
+
+                # Only show warning after 2 consecutive checks with no data (30 seconds total)
+                if consecutive_no_data >= 2:
+                    # No new data in the last 30 seconds
+                    self.parent.after(0, lambda: self.status_var.set("Status: No new data in the last 30 seconds. Check device."))
+                    print("No new data received in the last 30 seconds. Troubleshooting steps:")
+                    print("1. Make sure the chest strap is properly moistened and positioned")
+                    print("2. Try disconnecting and reconnecting the device")
+                    print("3. Check if the Polar H10 needs to be recharged")
+                    print("4. Ensure the Polar H10 is not connected to another device/app")
+
+                    # Try to force a reading
+                    try:
+                        print("Attempting to force a heart rate reading...")
+                        threading.Thread(target=lambda: self._force_test_reading(preview_mode=False), daemon=True).start()
+                    except Exception as e:
+                        print(f"Error forcing heart rate reading: {str(e)}")
+            else:
+                # Data is coming in
+                self.data_received = True
+                last_data_count = current_data_count
+                last_check_time = current_time
+                consecutive_no_data = 0  # Reset counter
+
+                # If we're getting data but not recording, remind the user
+                if self.data_received and not self.recording:
+                    print("Data is being received. Click 'Start Recording' to save the data.")
+
+    def _heart_rate_handler(self, sender, data):
+        """Handle incoming heart rate data"""
+        if not data:
+            return
+
+        try:
+            # Heart rate data format: https://www.bluetooth.com/specifications/specs/gatt-specification-supplement-3/
+            flags = data[0]
+            hr_format = (flags & 0x01) == 0x01  # 0 = UINT8, 1 = UINT16
+            has_rr = (flags & 0x10) == 0x10     # Check if RR intervals are present
+
+            if hr_format:
+                # UINT16 format
+                hr_value = struct.unpack('<H', data[1:3])[0]
+            else:
+                # UINT8 format
+                hr_value = data[1]
+
+            timestamp = local_clock()
+
+            # Set flag that data is being received
+            self.data_received = True
+
+            # Update status with latest heart rate
+            if self.recording:
+                self.status_var.set(f"Status: RECORDING | HR: {hr_value} bpm")
+            else:
+                self.status_var.set(f"Status: Connected | HR: {hr_value} bpm")
+
+            # Always add to data buffer for display purposes
+            self.data_buffers['HeartRate'].append((timestamp, hr_value))
+
+            # Limit buffer size to prevent memory issues
+            if len(self.data_buffers['HeartRate']) > 1000:
+                # Keep only the most recent 1000 points
+                self.data_buffers['HeartRate'] = self.data_buffers['HeartRate'][-1000:]
+
+            # If first data point, log it
+            if len(self.data_buffers['HeartRate']) == 1:
+                print(f"First heart rate data received: {hr_value} bpm")
+
+            # Only save to file if recording
+            if self.recording:
+                # Use a more efficient approach to file writing
+                self._write_hr_data_to_file(timestamp, hr_value)
+
+            # Check for RR intervals
+            if has_rr:
+                # RR intervals are in 1/1024 second format
+                rr_count = (len(data) - 2) // 2  # Each RR interval is 2 bytes
+                rr_offset = 2
+                if hr_format:
+                    rr_offset = 3  # RR values start after the 2-byte heart rate value
+
+                for i in range(rr_count):
+                    rr_value = struct.unpack('<H', data[rr_offset + i*2:rr_offset + i*2 + 2])[0]
+                    # Convert to milliseconds
+                    rr_ms = (rr_value / 1024) * 1000
+
+                    # Always add to data buffer for display
+                    self.data_buffers['RRinterval'].append((timestamp, rr_ms))
+
+                    # Limit buffer size
+                    if len(self.data_buffers['RRinterval']) > 1000:
+                        self.data_buffers['RRinterval'] = self.data_buffers['RRinterval'][-1000:]
+
+                    # Only save to file if recording
+                    if self.recording:
+                        # Use a more efficient approach to file writing
+                        self._write_rr_data_to_file(timestamp, rr_ms)
+
+        except Exception as e:
+            print(f"Error processing heart rate data: {str(e)}")
+
+    def _write_hr_data_to_file(self, timestamp, hr_value):
+        """Write heart rate data to file with better error handling"""
+        try:
+            # Check if we have a cached file handle
+            if not hasattr(self, '_hr_file') or self._hr_file is None:
+                # Create the file if it doesn't exist
+                csv_filename = os.path.join(self.participant_folder, "HeartRate_recording.csv")
+                if not os.path.exists(csv_filename):
+                    # Create directory if needed
+                    os.makedirs(os.path.dirname(csv_filename), exist_ok=True)
+                    # Create file with header
+                    with open(csv_filename, 'w', newline='') as csvfile:
+                        csv_writer = csv.writer(csvfile)
+                        csv_writer.writerow(['Timestamp', 'Value'])
+
+                # Open file for appending
+                self._hr_file = open(csv_filename, 'a', newline='')
+                self._hr_writer = csv.writer(self._hr_file)
+                print(f"Opened HR file for writing: {csv_filename}")
+
+            # Write data
+            self._hr_writer.writerow([timestamp, hr_value])
+            self._hr_file.flush()  # Ensure data is written immediately
+
+        except Exception as e:
+            print(f"Error writing HR data to file: {str(e)}")
+            # Close file handle if there was an error
+            if hasattr(self, '_hr_file') and self._hr_file is not None:
+                try:
+                    self._hr_file.close()
+                    self._hr_file = None
+                except:
+                    pass
+
+    def _write_rr_data_to_file(self, timestamp, rr_value):
+        """Write RR interval data to file with better error handling"""
+        try:
+            # Check if we have a cached file handle
+            if not hasattr(self, '_rr_file') or self._rr_file is None:
+                # Create the file if it doesn't exist
+                csv_filename = os.path.join(self.participant_folder, "RRinterval_recording.csv")
+                if not os.path.exists(csv_filename):
+                    # Create directory if needed
+                    os.makedirs(os.path.dirname(csv_filename), exist_ok=True)
+                    # Create file with header
+                    with open(csv_filename, 'w', newline='') as csvfile:
+                        csv_writer = csv.writer(csvfile)
+                        csv_writer.writerow(['Timestamp', 'Value'])
+
+                # Open file for appending
+                self._rr_file = open(csv_filename, 'a', newline='')
+                self._rr_writer = csv.writer(self._rr_file)
+                print(f"Opened RR file for writing: {csv_filename}")
+
+            # Write data
+            self._rr_writer.writerow([timestamp, rr_value])
+            self._rr_file.flush()  # Ensure data is written immediately
+
+        except Exception as e:
+            print(f"Error writing RR data to file: {str(e)}")
+            # Close file handle if there was an error
+            if hasattr(self, '_rr_file') and self._rr_file is not None:
+                try:
+                    self._rr_file.close()
+                    self._rr_file = None
+                except:
+                    pass
+
+    def _pmd_data_handler(self, sender, data):
+        """Handle PMD data (ECG and other raw data)"""
+        # This is a simplified handler - full implementation would parse the PMD data format
+        # For now, we're focusing on heart rate and RR intervals from the standard BLE service
+        pass
 
     def toggle_recording(self):
         if not self.recording:
-            self.recording = True
-            self.recording_event.set()
-            self.start_button.config(text="Stop Recording")
-            self.start_recording()
+            # Start recording
+            try:
+                # Set up recording files
+                threading.Thread(target=self._setup_recording_files, daemon=True).start()
+
+                # Mark the start of recording time
+                self.recording_start_time = local_clock()
+                print(f"Recording start time: {self.recording_start_time}")
+
+                # Set recording flags
+                self.recording = True
+                self.recording_event.set()
+                self.start_button.config(text="Stop Recording")
+                self.status_var.set(f"Status: Connected | RECORDING")
+                print("Recording started successfully")
+
+                # Force an immediate plot update to show recording state
+                self.update_plot()
+            except Exception as e:
+                print(f"Error starting recording: {str(e)}")
+                messagebox.showerror("Recording Error", f"Failed to start recording: {str(e)}")
+                self.recording = False
+                self.recording_event.clear()
+                self.start_button.config(text="Start Recording")
         else:
             self.stop_recording()
+            self.status_var.set(f"Status: Connected | Recording stopped")
 
-    def start_recording(self):
-        for stream_name in self.inlets.keys():
-            thread = threading.Thread(target=self.record_stream, args=(stream_name,))
-            thread.daemon = True
-            thread.start()
+    def _setup_recording_files(self):
+        """Set up recording files in a separate thread"""
+        try:
+            # Ensure the participant folder exists
+            if not os.path.exists(self.participant_folder):
+                os.makedirs(self.participant_folder, exist_ok=True)
+
+            # Create CSV files with headers
+            for stream_name in self.data_buffers.keys():
+                csv_filename = os.path.join(self.participant_folder, f"{stream_name}_recording.csv")
+                with open(csv_filename, 'w', newline='') as csvfile:
+                    csv_writer = csv.writer(csvfile)
+                    csv_writer.writerow(['Timestamp', 'Value'])
+                print(f"Created file: {csv_filename}")
+
+            # Create a file for marked timestamps
+            marked_filename = os.path.join(self.participant_folder, "marked_timestamps.csv")
+            with open(marked_filename, 'w', newline='') as csvfile:
+                csv_writer = csv.writer(csvfile)
+                csv_writer.writerow(['Timestamp'])
+                print(f"Created file: {marked_filename}")
+
+            print(f"Recording files created in {self.participant_folder}")
+
+            # Start a thread to monitor recording
+            threading.Thread(target=self._monitor_recording, daemon=True).start()
+
+        except Exception as e:
+            print(f"Error in setup_recording_files: {str(e)}")
+            # Notify the user of the error
+            self.parent.after(0, lambda: messagebox.showerror("Recording Error", 
+                                                             f"Failed to set up recording files: {str(e)}"))
+
+    def _monitor_recording(self):
+        """Monitor the recording process to ensure data is being saved"""
+        if not self.recording:
+            return
+
+        # Wait a few seconds for data to start coming in
+        time.sleep(5)
+
+        # Check if any data has been recorded
+        try:
+            hr_filename = os.path.join(self.participant_folder, "HeartRate_recording.csv")
+            if os.path.exists(hr_filename):
+                file_size = os.path.getsize(hr_filename)
+                if file_size <= 20:  # Only header line
+                    print("WARNING: No heart rate data has been recorded after 5 seconds")
+                    self.parent.after(0, lambda: messagebox.showwarning(
+                        "No Data Recorded",
+                        "No heart rate data has been recorded after 5 seconds. Check that the device is properly positioned."
+                    ))
+                else:
+                    print(f"Recording is working. File size: {file_size} bytes")
+        except Exception as e:
+            print(f"Error monitoring recording: {str(e)}")
 
     def stop_recording(self):
         self.recording = False
         self.recording_event.clear()
         self.start_button.config(text="Start Recording")
+
+        # Close file handles if they're open
+        self._close_recording_files()
+
         self.save_marked_timestamps()
+
+        # Verify the recording files
+        self._verify_recording_files()
+
+    def _close_recording_files(self):
+        """Close any open file handles"""
+        # Close heart rate file
+        if hasattr(self, '_hr_file') and self._hr_file is not None:
+            try:
+                self._hr_file.close()
+                print("Closed heart rate recording file")
+            except Exception as e:
+                print(f"Error closing heart rate file: {str(e)}")
+            finally:
+                self._hr_file = None
+
+        # Close RR interval file
+        if hasattr(self, '_rr_file') and self._rr_file is not None:
+            try:
+                self._rr_file.close()
+                print("Closed RR interval recording file")
+            except Exception as e:
+                print(f"Error closing RR interval file: {str(e)}")
+            finally:
+                self._rr_file = None
+
+    def _verify_recording_files(self):
+        """Verify that the recording files exist and contain data"""
+        try:
+            print("\n--- Verifying Recording Files ---")
+
+            for stream_name in self.data_buffers.keys():
+                csv_filename = os.path.join(self.participant_folder, f"{stream_name}_recording.csv")
+
+                if not os.path.exists(csv_filename):
+                    print(f"WARNING: File does not exist: {csv_filename}")
+                    continue
+
+                file_size = os.path.getsize(csv_filename)
+                print(f"File: {csv_filename}, Size: {file_size} bytes")
+
+                # Check if file contains data beyond the header
+                if file_size <= 20:  # Only header line
+                    print(f"WARNING: File appears to be empty (only header): {csv_filename}")
+                else:
+                    # Count the number of lines in the file
+                    line_count = 0
+                    with open(csv_filename, 'r') as f:
+                        for line in f:
+                            line_count += 1
+
+                    print(f"File contains {line_count} lines (including header)")
+
+                    if line_count <= 1:
+                        print(f"WARNING: No data rows in file: {csv_filename}")
+                    else:
+                        print(f"✓ File contains {line_count-1} data rows")
+
+            print("--- Recording Files Verification Complete ---\n")
+
+            # Show a summary to the user
+            if len(self.data_buffers['HeartRate']) > 0:
+                hr_filename = os.path.join(self.participant_folder, f"HeartRate_recording.csv")
+                if os.path.exists(hr_filename) and os.path.getsize(hr_filename) > 20:
+                    messagebox.showinfo("Recording Complete", f"Recording completed successfully.\nData saved to {self.participant_folder}")
+                else:
+                    messagebox.showwarning("Recording Issue", "Recording completed, but the heart rate file may not contain data.\nCheck the console for details.")
+            else:
+                messagebox.showwarning("No Data", "Recording completed, but no heart rate data was collected.\nCheck the device positioning and connection.")
+
+        except Exception as e:
+            print(f"Error verifying recording files: {str(e)}")
 
     def mark_timestamp(self):
         if self.recording:
@@ -143,56 +892,338 @@ class LSLStreamRecorder:
             csv_writer.writerow(['Timestamp'])
             csv_writer.writerows([[ts] for ts in self.marked_timestamps])
 
-    def record_stream(self, stream_name):
-        csv_filename = os.path.join(self.participant_folder, f"{stream_name}_recording.csv")
-        with open(csv_filename, 'w', newline='') as csvfile:
-            csv_writer = csv.writer(csvfile)
-            csv_writer.writerow(['Timestamp', 'Value'])
-
-            while self.recording:
-                sample, _ = self.inlets[stream_name].pull_sample(timeout=1.0)
-                if sample:
-                    value = sample[0]
-                    timestamp = local_clock()
-                    self.data_buffers[stream_name].append((timestamp, value))
-                    csv_writer.writerow([timestamp, value])
-                    csvfile.flush()
-                time.sleep(0.001)
-
     def update_plot(self):
-        self.ax1.clear()
-        self.ax2.clear()
-        has_hr_data = False
-        has_rr_data = False
+        try:
+            self.ax1.clear()
+            self.ax2.clear()
+            has_hr_data = False
+            has_rr_data = False
+            current_time = local_clock()
 
-        if 'HeartRate' in self.data_buffers and self.data_buffers['HeartRate']:
-            timestamps_hr, values_hr = zip(*self.data_buffers['HeartRate'])
-            self.ax1.plot(timestamps_hr, values_hr, 'b-', label='Heart Rate', linewidth=1.5)
-            self.ax1.set_ylabel('Heart Rate (bpm)', color='b', labelpad=15, va='center')  # Center label
-            self.ax1.tick_params(axis='y', labelcolor='b')
-            has_hr_data = True
+            # Plot heart rate data
+            if 'HeartRate' in self.data_buffers and self.data_buffers['HeartRate']:
+                # Limit to last 100 seconds of data
+                hr_data = [(ts, val) for ts, val in self.data_buffers['HeartRate'] if current_time - ts <= 100]
 
-        if 'RRinterval' in self.data_buffers and self.data_buffers['RRinterval']:
-            timestamps_rr, values_rr = zip(*self.data_buffers['RRinterval'])
-            self.ax2.plot(timestamps_rr, values_rr, 'r-', label='RR Interval', linewidth=1.5)
+                if hr_data:
+                    # If recording, split data into pre-recording and recording data
+                    if self.recording and hasattr(self, 'recording_start_time'):
+                        pre_recording_hr = [(ts, val) for ts, val in hr_data if ts < self.recording_start_time]
+                        recording_hr = [(ts, val) for ts, val in hr_data if ts >= self.recording_start_time]
 
-            # Move the RR Interval label to the right and center it properly
-            self.ax2.set_ylabel('RR Interval (ms)', color='r', labelpad=15, ha='right', va='center')
-            self.ax2.yaxis.set_label_position("right")  # Ensure label is on the right
-            self.ax2.tick_params(axis='y', labelcolor='r')
-            has_rr_data = True
+                        # Plot pre-recording data in lighter color
+                        if pre_recording_hr:
+                            timestamps_pre, values_pre = zip(*pre_recording_hr)
+                            self.ax1.plot(timestamps_pre, values_pre, 'b-', alpha=0.3, linewidth=1.0, label='Preview HR')
 
-        self.ax1.set_xlabel("Time (Last 100s)")
-        self.ax1.grid(True, linestyle='--', alpha=0.6)
+                        # Plot recording data in bold
+                        if recording_hr:
+                            timestamps_rec, values_rec = zip(*recording_hr)
+                            self.ax1.plot(timestamps_rec, values_rec, 'b-', linewidth=2.0, label='Recording HR')
+                            has_hr_data = True
+                    else:
+                        # Regular display for preview mode
+                        timestamps_hr, values_hr = zip(*hr_data)
+                        self.ax1.plot(timestamps_hr, values_hr, 'b-', label='Heart Rate', linewidth=1.5)
+                        has_hr_data = True
 
-        # Only add legend if data exists
-        if has_hr_data:
-            self.ax1.legend(loc='upper left')
-        if has_rr_data:
-            self.ax2.legend(loc='upper right')
+                    # Set y-axis limits with some padding to prevent jumping
+                    if has_hr_data:
+                        all_values = [val for _, val in hr_data]
+                        if all_values:
+                            min_val = max(0, min(all_values) - 5)
+                            max_val = max(all_values) + 5
+                            self.ax1.set_ylim(min_val, max_val)
 
-        self.canvas_plot.draw()
-        self.parent.after(100, self.update_plot)
+                self.ax1.set_ylabel('Heart Rate (bpm)', color='b', labelpad=15, va='center')
+                self.ax1.tick_params(axis='y', labelcolor='b')
+
+            # Plot RR interval data
+            if 'RRinterval' in self.data_buffers and self.data_buffers['RRinterval']:
+                # Limit to last 100 seconds of data
+                rr_data = [(ts, val) for ts, val in self.data_buffers['RRinterval'] if current_time - ts <= 100]
+
+                if rr_data:
+                    # If recording, split data into pre-recording and recording data
+                    if self.recording and hasattr(self, 'recording_start_time'):
+                        pre_recording_rr = [(ts, val) for ts, val in rr_data if ts < self.recording_start_time]
+                        recording_rr = [(ts, val) for ts, val in rr_data if ts >= self.recording_start_time]
+
+                        # Plot pre-recording data in lighter color
+                        if pre_recording_rr:
+                            timestamps_pre, values_pre = zip(*pre_recording_rr)
+                            self.ax2.plot(timestamps_pre, values_pre, 'r-', alpha=0.3, linewidth=1.0, label='Preview RR')
+
+                        # Plot recording data in bold
+                        if recording_rr:
+                            timestamps_rec, values_rec = zip(*recording_rr)
+                            self.ax2.plot(timestamps_rec, values_rec, 'r-', linewidth=2.0, label='Recording RR')
+                            has_rr_data = True
+                    else:
+                        # Regular display for preview mode
+                        timestamps_rr, values_rr = zip(*rr_data)
+                        self.ax2.plot(timestamps_rr, values_rr, 'r-', label='RR Interval', linewidth=1.5)
+                        has_rr_data = True
+
+                    # Set y-axis limits with some padding to prevent jumping
+                    if has_rr_data:
+                        all_values = [val for _, val in rr_data]
+                        if all_values:
+                            min_val = max(0, min(all_values) - 50)
+                            max_val = max(all_values) + 50
+                            self.ax2.set_ylim(min_val, max_val)
+
+                self.ax2.set_ylabel('RR Interval (ms)', color='r', labelpad=15, ha='right', va='center')
+                self.ax2.yaxis.set_label_position("right")
+                self.ax2.tick_params(axis='y', labelcolor='r')
+
+            # Set x-axis limits to prevent horizontal jumping
+            if has_hr_data or has_rr_data:
+                self.ax1.set_xlim(current_time - 100, current_time)
+
+            self.ax1.set_xlabel("Time (Last 100s)")
+            self.ax1.grid(True, linestyle='--', alpha=0.6)
+
+            # Add a legend if recording to show the difference between preview and recording data
+            if self.recording:
+                self.ax1.legend(loc='upper left')
+                self.ax2.legend(loc='upper right')
+
+            # Add a vertical line at recording start time if recording
+            if self.recording and hasattr(self, 'recording_start_time'):
+                if current_time - self.recording_start_time <= 100:  # Only if recording start is within view
+                    self.ax1.axvline(x=self.recording_start_time, color='g', linestyle='--', 
+                                    label='Recording Start')
+
+            # Add marked timestamps as vertical lines
+            for ts in self.marked_timestamps:
+                if current_time - ts <= 100:  # Only if timestamp is within view
+                    self.ax1.axvline(x=ts, color='m', linestyle=':', alpha=0.7)
+
+            # Draw the plot
+            self.canvas_plot.draw()
+
+        except Exception as e:
+            print(f"Error updating plot: {str(e)}")
+
+    def test_connection(self):
+        """Test the connection to the Polar H10 device"""
+        if not self.connected or not self.client:
+            messagebox.showwarning("Not Connected", "Please connect to a Polar H10 device first.")
+            return
+
+        print("\n--- Starting Connection Test ---")
+        print("1. Testing device connection...")
+
+        if self.client.is_connected:
+            print("✓ Device is connected")
+        else:
+            print("✗ Device is NOT connected")
+            messagebox.showerror("Connection Test", "Device is not connected. Please reconnect.")
+            return
+
+        print("2. Testing data reception...")
+        if len(self.data_buffers['HeartRate']) > 0:
+            last_hr = self.data_buffers['HeartRate'][-1][1]
+            print(f"✓ Heart rate data is being received (last value: {last_hr} bpm)")
+        else:
+            print("✗ No heart rate data has been received")
+            print("Troubleshooting tips:")
+            print("- Make sure the chest strap is properly moistened")
+            print("- Ensure the Polar H10 is firmly attached to the strap")
+            print("- Check that the strap is positioned correctly on your chest")
+            print("- Try removing and reinserting the Polar H10 from the strap")
+
+            # Try to force a heart rate reading
+            print("Attempting to force a heart rate reading...")
+            threading.Thread(target=self._force_test_reading, daemon=True).start()
+
+        if len(self.data_buffers['RRinterval']) > 0:
+            last_rr = self.data_buffers['RRinterval'][-1][1]
+            print(f"✓ RR interval data is being received (last value: {last_rr} ms)")
+        else:
+            print("ℹ No RR interval data has been received (this is optional)")
+
+        print("3. Testing file system...")
+        try:
+            test_file_path = os.path.join(self.participant_folder, "test_file.txt")
+            with open(test_file_path, 'w') as test_file:
+                test_file.write("Test file write successful")
+            os.remove(test_file_path)
+            print("✓ File system is working correctly")
+        except Exception as e:
+            print(f"✗ File system test failed: {str(e)}")
+            print("This may cause issues when recording data")
+
+        print("\nTest Summary:")
+        if self.client.is_connected and len(self.data_buffers['HeartRate']) > 0:
+            print("Connection is working correctly. You can start recording data.")
+            messagebox.showinfo("Connection Test", "Connection test passed! You can start recording data.")
+        elif self.client.is_connected and len(self.data_buffers['HeartRate']) == 0:
+            print("Device is connected but no data is being received.")
+            print("Please check the positioning of the Polar H10 and chest strap.")
+            messagebox.showwarning("Connection Test", "Device is connected but no data is being received. Please check the positioning of the Polar H10 and chest strap.")
+        else:
+            print("Connection test failed. Please reconnect the device.")
+            messagebox.showerror("Connection Test", "Connection test failed. Please reconnect the device.")
+
+        print("--- Connection Test Complete ---\n")
+
+    def _force_test_reading(self, preview_mode=False):
+        """Force a heart rate reading during the connection test or preview mode"""
+        try:
+            # For preview mode, use a lighter approach first
+            if preview_mode:
+                try:
+                    # Just try to read heart rate directly
+                    hr_value = self.loop.run_until_complete(self._read_heart_rate())
+                    if hr_value:
+                        return
+                except Exception as e:
+                    # If that fails, continue with standard approach
+                    pass
+
+            # Standard approach
+            self.loop.run_until_complete(self._force_heart_rate_reading_loop())
+
+            # Wait a moment to see if data arrives
+            time.sleep(1 if preview_mode else 2)
+
+            # If still no data and not in preview mode, try a more aggressive approach
+            if not self.data_buffers['HeartRate'] and not preview_mode:
+                print("Standard approach failed. Trying more aggressive methods...")
+                self.loop.run_until_complete(self._aggressive_heart_rate_test())
+        except Exception as e:
+            print(f"Error in force test reading: {str(e)}")
+
+    async def _read_heart_rate(self):
+        """Read heart rate characteristic directly"""
+        try:
+            hr_data = await self.client.read_gatt_char(HEART_RATE_UUID)
+            if hr_data and len(hr_data) > 0:
+                flags = hr_data[0]
+                hr_format = (flags & 0x01) == 0x01
+
+                if hr_format:
+                    hr_value = struct.unpack('<H', hr_data[1:3])[0]
+                else:
+                    hr_value = hr_data[1]
+
+                # Manually call the handler with this data to process it
+                self._heart_rate_handler(None, hr_data)
+                return hr_value
+        except Exception as e:
+            print(f"Error reading heart rate directly: {str(e)}")
+        return None
+
+    async def _aggressive_heart_rate_test(self):
+        """Try more aggressive methods to get heart rate data"""
+        try:
+            # Try to restart the entire connection
+            print("Attempting to restart notifications completely...")
+
+            # Stop all notifications
+            try:
+                await self.client.stop_notify(HEART_RATE_UUID)
+                await self.client.stop_notify(PMD_DATA)
+            except Exception as e:
+                print(f"Error stopping notifications: {str(e)}")
+
+            # Wait a moment
+            await asyncio.sleep(1)
+
+            # Try to write to the Client Characteristic Configuration Descriptor directly
+            try:
+                services = await self.client.get_services()
+                for service in services.services.values():
+                    if service.uuid.lower() == HEART_RATE_SERVICE.lower():
+                        for char in service.characteristics:
+                            if char.uuid.lower() == HEART_RATE_UUID.lower():
+                                for descriptor in char.descriptors:
+                                    if descriptor.uuid.lower() == CLIENT_CHAR_CONFIG.lower():
+                                        # Write 0x0100 to enable notifications (little endian)
+                                        await self.client.write_gatt_descriptor(descriptor.handle, bytearray([0x01, 0x00]))
+                                        print("Enabled heart rate notifications via descriptor")
+                                        break
+            except Exception as e:
+                print(f"Error writing to descriptor: {str(e)}")
+
+            # Restart notifications
+            await self.client.start_notify(HEART_RATE_UUID, self._heart_rate_handler)
+            print("Restarted heart rate notifications")
+
+            # Try to read heart rate directly
+            try:
+                hr_value = await self._read_heart_rate()
+                if hr_value:
+                    print(f"Direct heart rate reading: {hr_value} bpm")
+            except Exception as e:
+                print(f"Error reading heart rate directly: {str(e)}")
+
+            # Wait a moment to see if data arrives
+            await asyncio.sleep(2)
+
+            # Check if we have data now
+            if self.data_buffers['HeartRate']:
+                print("Successfully received heart rate data after aggressive methods")
+            else:
+                print("Still no heart rate data received. The device may need to be reset or recharged.")
+                print("Try the following:")
+                print("1. Remove the Polar H10 from the strap and reinsert it")
+                print("2. Ensure the battery is charged (current level: low)")
+                print("3. Make sure the chest strap is properly moistened and positioned")
+                print("4. Try restarting the application")
+
+        except Exception as e:
+            print(f"Error in aggressive heart rate test: {str(e)}")
+
+    def disconnect_from_device(self):
+        """Disconnect from the Polar device"""
+        if self.recording:
+            self.stop_recording()
+
+        threading.Thread(target=self._disconnect_thread, daemon=True).start()
+
+    def _disconnect_thread(self):
+        try:
+            self.connect_button.config(text="Disconnecting...", state=tk.DISABLED)
+
+            if self.client and self.client.is_connected:
+                self.loop.run_until_complete(self._disconnect_from_polar())
+
+            self.connected = False
+            self.start_button.config(state=tk.DISABLED)
+            self.mark_button.config(state=tk.DISABLED)
+            self.connect_button.config(text="Connect", state=tk.NORMAL, command=self.connect_to_device)
+            self.status_var.set("Status: Disconnected")
+            
+            # Close any open file handles
+            self._close_recording_files()
+            
+            messagebox.showinfo("Disconnected", "Disconnected from Polar H10")
+        except Exception as e:
+            messagebox.showerror("Disconnection Error", f"Error during disconnection: {str(e)}")
+            self.connect_button.config(text="Connect", state=tk.NORMAL, command=self.connect_to_device)
+
+    async def _disconnect_from_polar(self):
+        """Disconnect from the Polar device"""
+        if self.client:
+            # Stop notifications
+            try:
+                await self.client.stop_notify(HEART_RATE_UUID)
+                await self.client.stop_notify(PMD_DATA)
+            except Exception as e:
+                print(f"Error stopping notifications: {str(e)}")
+
+            # Disconnect
+            try:
+                await self.client.disconnect()
+                print("Disconnected from Polar device")
+            except Exception as e:
+                print(f"Error disconnecting: {str(e)}")
+            
+            # Clear the client
+            self.client = None
 
 
 class LSLDataAnalyzer:
@@ -201,7 +1232,7 @@ class LSLDataAnalyzer:
         self.setup_ui()
 
     def setup_ui(self):
-        tk.Label(self.parent, text="LSL Data Analyzer", font=("Helvetica", 32, "bold"), bg="#ffffff").pack(pady=10)
+        tk.Label(self.parent, text="Data Analyzer", font=("Helvetica", 32, "bold"), bg="#ffffff").pack(pady=10)
 
         # Participant ID
         self.participant_id_label = tk.Label(self.parent, text="Participant ID:", bg="#ffffff")
@@ -251,8 +1282,6 @@ class LSLDataAnalyzer:
                     reader = csv.reader(csvfile)
                     next(reader)  # Header überspringen
                     data_buffers[stream] = [(float(row[0]), float(row[1])) for row in reader]
-            else:
-                data_buffers[stream] = []
 
         # Analysieren der Daten mit Episoden-Erkennung
         self.analyze_data(data_buffers, marked_timestamps)
