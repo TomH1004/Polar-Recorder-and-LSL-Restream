@@ -4,6 +4,9 @@
 
 LSL-Lab.py is a Python application that allows direct connection to a Polar H10 heart rate monitor via Bluetooth Low Energy (BLE) to record and analyze heart rate and RR interval data. The application provides a user-friendly interface with real-time visualization and data analysis capabilities.
 
+![{6722934E-118E-4DE5-B0DD-D202C89F5B4C}](https://github.com/user-attachments/assets/b26621c1-6052-496c-be65-d70ead0f246c)
+
+
 ## Features
 
 - **Direct Bluetooth Connection**: Connect directly to Polar H10 devices without requiring intermediary applications
