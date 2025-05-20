@@ -1,3 +1,13 @@
+"""
+This file contains the main application for the Polar H10 Recorder & Analyzer.
+
+The application provides a Graphical User Interface (GUI) for:
+- Connecting to Polar H10 devices via Bluetooth Low Energy (BLE).
+- Recording physiological data (Heart Rate, RR intervals).
+- Real-time plotting of incoming data.
+- Saving recorded data to CSV files.
+- Analyzing previously recorded data.
+"""
 import threading
 import csv
 import time
@@ -41,7 +51,28 @@ ERROR_COLOR = "#F38BA8"  # Error color
 BORDER_COLOR = "#313244"  # Border color
 
 class LSLGui:
+    """
+    The main Tkinter application class for the Polar H10 Recorder & Analyzer.
+
+    This class sets up the main application window, configures its theme, and
+    arranges the primary user interface frames. It is responsible for
+    instantiating and managing the `PolarStreamRecorder` (for data acquisition)
+    and `LSLDataAnalyzer` (for data analysis) components, which form the
+    core functionalities of the application.
+    """
     def __init__(self, master):
+        """
+        Initializes the main application window and its components.
+
+        This constructor sets up the main Tkinter window, configures the visual
+        theme, creates the header (title and subtitle), and content frames.
+        It then initializes the `PolarStreamRecorder` and `LSLDataAnalyzer`
+        classes, placing them within their respective frames in the UI.
+        It also sets up the handler for the window closing event.
+
+        Parameters:
+            master (tk.Tk): The root Tkinter window for the application.
+        """
         self.master = master
         self.master.title("Polar H10 Recorder & Analyzer")
         self.master.geometry("2100x1050")
@@ -100,7 +131,15 @@ class LSLGui:
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
         
     def configure_theme(self):
-        """Configure the ttk theme for a modern look"""
+        """
+        Configures the ttk theme for a modern look and feel.
+
+        This method customizes the appearance of various ttk widgets to ensure
+        a consistent and modern visual style throughout the application.
+        It styles components such as TButton, TCombobox, TEntry, and TScrollbar,
+        defining their background colors, foreground colors, borders, and other
+        visual attributes to match the application's dark theme.
+        """
         style = ttk.Style()
         
         # Configure TButton style
@@ -144,7 +183,17 @@ class LSLGui:
         )
         
     def on_closing(self):
-        """Handle window closing event"""
+        """
+        Handles the window closing event (WM_DELETE_WINDOW protocol).
+
+        This method is called when the user attempts to close the main application
+        window. It first checks if the `PolarStreamRecorder` is connected to a
+        Polar H10 device. If a connection is active, it attempts to gracefully
+        disconnect the device to ensure proper termination of Bluetooth communications
+        and data saving processes. After attempting disconnection (or if no
+        connection was active), it destroys the main Tkinter window, closing the
+        application.
+        """
         try:
             # Disconnect from device if connected
             if hasattr(self.recorder, 'connected') and self.recorder.connected:
@@ -160,7 +209,34 @@ class LSLGui:
 
 
 class PolarStreamRecorder:
+    """
+    Manages the recording functionality of the Polar H10 Recorder & Analyzer.
+
+    This class is responsible for:
+    - Setting up the UI elements for participant ID, device scanning/selection,
+      recording controls (connect, start/stop, mark timestamp), status display,
+      console output, and real-time data plots.
+    - Handling Bluetooth Low Energy (BLE) communication with the Polar H10
+      device, including scanning for devices, establishing connections,
+      managing disconnections, and receiving data.
+    - Processing and displaying incoming heart rate (HR) and RR interval data.
+    - Managing the recording of this data to CSV files in a participant-specific
+      folder.
+    - Updating a live plot to visualize the physiological data in real-time.
+    """
     def __init__(self, parent):
+        """
+        Initializes the PolarStreamRecorder component.
+
+        Sets up initial state variables such as recording status, data buffers for
+        HR and RR intervals, and the BLE client. It also redirects stdout
+        to the application's GUI console for in-app logging and calls the
+        `setup_ui()` method to build the user interface for this recorder module.
+
+        Parameters:
+            parent (tk.Frame): The parent Tkinter frame in which this recorder's
+                               UI elements will be built.
+        """
         self.parent = parent
         self.recording = False
         self.recording_event = threading.Event()
@@ -190,7 +266,18 @@ class PolarStreamRecorder:
         self.setup_ui()
 
     def write(self, text):
-        """Redirect stdout to our console"""
+        """
+        Redirects stdout to the application's console display in the GUI.
+
+        This method is part of the mechanism to show `print()` statements and
+        other stdout messages within the Tkinter console widget.
+
+        Parameters:
+            text (str): The text string to be written to the console.
+
+        Returns:
+            The result of the original `stdout.write` method.
+        """
         if hasattr(self, 'console'):
             timestamp = datetime.now().strftime("%H:%M:%S")
             self.parent.after(0, lambda: self.console.insert(tk.END, f"[{timestamp}] {text}"))
@@ -198,10 +285,27 @@ class PolarStreamRecorder:
         return self.stdout_original.write(text)
 
     def flush(self):
-        """Required for stdout redirection"""
+        """
+        Provides the flush method required for stdout redirection.
+
+        This method is part of the mechanism to ensure that `stdout` messages
+        are properly handled when redirected to the GUI console.
+
+        Returns:
+            The result of the original `stdout.flush` method.
+        """
         return self.stdout_original.flush()
 
     def setup_ui(self):
+        """
+        Creates and arranges all UI elements for the recording module.
+
+        This includes setting up input fields for participant ID, buttons for
+        device scanning, connection, starting/stopping recording, and marking
+        timestamps. It also creates labels for status display, a scrolled text
+        widget for console output, and a matplotlib canvas for plotting
+        real-time physiological data.
+        """
         # Section title with icon-like prefix
         title_frame = tk.Frame(self.parent, bg=DARKER_BG)
         title_frame.pack(fill=tk.X, pady=(0, 15))
@@ -409,10 +513,28 @@ class PolarStreamRecorder:
         self.update_plot()
 
     def scan_devices(self):
+        """
+        Initiates the BLE device scan.
+
+        This method is called when the 'Scan' button is pressed. It disables the
+        scan button to prevent multiple concurrent scans and starts the
+        `_scan_devices_thread` in a new thread to perform the actual scanning
+        asynchronously, keeping the GUI responsive.
+        """
         self.scan_button.config(text="Scanning...", state=tk.DISABLED)
         threading.Thread(target=self._scan_devices_thread, daemon=True).start()
 
     def _scan_devices_thread(self):
+        """
+        Performs asynchronous BLE scanning for Polar devices.
+
+        This method runs in a separate thread. It calls the asynchronous
+        `_scan_for_polar_devices` method to discover nearby Polar H10 devices
+        using `BleakScanner`. Upon completion, it updates the device dropdown
+        list in the UI with the names and addresses of found devices. It also
+        handles potential errors during the scanning process and re-enables the
+        scan button.
+        """
         try:
             devices = self.loop.run_until_complete(self._scan_for_polar_devices())
             self.device_dropdown['values'] = devices
@@ -425,6 +547,18 @@ class PolarStreamRecorder:
             self.scan_button.config(text="Scan", state=tk.NORMAL)
 
     async def _scan_for_polar_devices(self):
+        """
+        Performs the actual BLE scan for Polar devices.
+
+        This asynchronous method uses `BleakScanner` to discover nearby Bluetooth
+        Low Energy devices. It filters the discovered devices, looking for those
+        whose names contain "Polar".
+
+        Returns:
+            list[str]: A list of strings, where each string represents a found
+                       Polar device in the format "Device Name (Device Address)".
+                       Example: "Polar H10 A1B2C3D4 (XX:XX:XX:XX:XX:XX)".
+        """
         devices = []
         scanner = BleakScanner()
         discovered_devices = await scanner.discover(timeout=5.0)
@@ -436,6 +570,16 @@ class PolarStreamRecorder:
         return devices
 
     def connect_to_device(self):
+        """
+        Initiates the connection to the selected Polar H10 device.
+
+        This method is called when the 'Connect' button is pressed. It retrieves
+        the participant ID from the input field and the selected device from the
+        dropdown menu. It then sets up the participant-specific data folder,
+        checking for necessary write permissions using `_check_folder_permissions`.
+        If permissions are granted, it starts the `_connect_thread` in a new
+        thread to handle the asynchronous BLE connection process.
+        """
         participant_id = self.participant_id_entry.get().strip()
         if not participant_id:
             messagebox.showwarning("Participant ID Missing", "Please enter a Participant ID.")
@@ -461,7 +605,18 @@ class PolarStreamRecorder:
         threading.Thread(target=self._connect_thread, daemon=True).start()
 
     def _check_folder_permissions(self):
-        """Check if we have permission to write to the participant folder"""
+        """
+        Checks if the application has write permissions to the target folder.
+
+        This method attempts to create the participant-specific data directory
+        (`Participant_Data/Participant_<ID>`) if it doesn't exist. It then
+        tries to write and delete a temporary test file within this directory
+        to confirm write permissions.
+
+        Returns:
+            bool: True if write permissions are confirmed, False otherwise.
+                  If permissions are denied, an error message is shown to the user.
+        """
         try:
             # First check if the parent directory exists and is writable
             parent_dir = os.path.dirname(self.participant_folder)
@@ -524,6 +679,16 @@ class PolarStreamRecorder:
             return False
 
     def _connect_thread(self):
+        """
+        Manages the asynchronous BLE connection process in a separate thread.
+
+        This method calls `_connect_to_polar()` to perform the actual BLE
+        connection. It updates UI elements (e.g., connect/disconnect button state
+        and text, status label) based on the outcome of the connection attempt.
+        If the connection is successful, it enables recording controls,
+        starts periodic data requests (for preview), and schedules regular
+        updates for the live data plot.
+        """
         try:
             # Update button appearance for connecting state
             self.connect_button.config(
@@ -585,14 +750,29 @@ class PolarStreamRecorder:
             )
             
     def _schedule_plot_updates(self):
-        """Schedule regular plot updates"""
+        """
+        Schedules regular updates to the live data plot.
+
+        If the device is connected, this method calls `update_plot()` to refresh
+        the plot and then uses `self.parent.after()` to schedule itself to be
+        called again after a short interval (e.g., 500ms), creating a loop
+        for continuous plot updates.
+        """
         if self.connected:
             self.update_plot()
             # Update plot every 500ms
             self.parent.after(500, self._schedule_plot_updates)
 
     def _periodic_data_request(self):
-        """Periodically request data to ensure continuous data flow"""
+        """
+        Periodically requests data to ensure continuous data flow for preview.
+
+        This method runs in a separate thread while the device is connected.
+        It checks if recent data has been received. If no data has arrived
+        within a certain timeframe (e.g., 3 seconds), it attempts to force a
+        test reading from the device. This helps maintain an active data flow,
+        especially for the live preview before recording starts.
+        """
         while self.connected:
             current_time = time.time()
 
@@ -615,6 +795,24 @@ class PolarStreamRecorder:
             time.sleep(2)  # Check every 2 seconds
 
     async def _connect_to_polar(self):
+        """
+        Handles the core BLE connection logic to the Polar H10 device.
+
+        This asynchronous method uses `BleakClient` to establish a connection
+        to the specified Polar H10 device address. Upon successful connection,
+        it attempts to:
+        1. Read the device's battery level.
+        2. Set up notifications for the Heart Rate characteristic (UUID `00002a37-xxxx`)
+           to receive HR and RR interval data.
+        3. Set up notifications for the PMD (Polar Measurement Data) characteristic
+           (UUID `FB005C82-xxxx`) to potentially receive ECG data (which can also
+           be a source for RR intervals).
+        4. Start a data watchdog thread (`_data_watchdog`) to monitor data reception.
+
+        Raises:
+            Exception: If any part of the connection process (device connection,
+                       characteristic discovery, notification setup) fails.
+        """
         # Connect to the Polar H10
         try:
             print(f"Attempting to connect to device at address: {self.device_address}")
@@ -732,7 +930,14 @@ class PolarStreamRecorder:
             raise e
 
     def _force_initial_reading(self):
-        """Force an initial heart rate reading to verify connection"""
+        """
+        Attempts to force an initial heart rate reading after connection.
+
+        This method is typically called after setting up notifications. It waits
+        briefly and, if no heart rate data has been received, calls
+        `_force_heart_rate_reading_loop()` to try and elicit data from the device.
+        This helps ensure that the connection is active and data is flowing.
+        """
         try:
             time.sleep(2)  # Wait for notifications to be set up
             if not self.data_buffers['HeartRate']:
@@ -742,7 +947,16 @@ class PolarStreamRecorder:
             print(f"Error forcing initial reading: {str(e)}")
 
     async def _force_heart_rate_reading_loop(self):
-        """Try multiple approaches to get heart rate data"""
+        """
+        Asynchronously tries multiple approaches to obtain heart rate data.
+
+        This method attempts several strategies if initial data reception fails:
+        1. Directly reads the heart rate characteristic.
+        2. Tries to restart notifications (implementation might be in `_restart_notifications`).
+        3. Reads the battery level to potentially keep the connection active.
+        4. Writes to a control characteristic (PMD_CONTROL) to "wake up" the device.
+        This is used to troubleshoot connections where data isn't flowing automatically.
+        """
         try:
             # Try reading the heart rate characteristic directly
             try:
@@ -778,7 +992,14 @@ class PolarStreamRecorder:
             print(f"Error in force heart rate reading loop: {str(e)}")
 
     def _data_watchdog(self):
-        """Check if we're receiving data from the device"""
+        """
+        Monitors data reception and provides feedback if data flow stops.
+
+        This method runs in a thread to monitor data reception. If no HR data
+        is received shortly after connection or if data flow stops, it updates
+        the status, prints troubleshooting tips, and may attempt to force a
+        reading.
+        """
         time.sleep(5)  # Wait for initial connection
 
         if not self.data_buffers['HeartRate']:
@@ -837,7 +1058,18 @@ class PolarStreamRecorder:
                     print("Data is being received. Click 'Start Recording' to save the data.")
 
     def _heart_rate_handler(self, sender, data):
-        """Handle incoming heart rate data"""
+        """
+        Callback invoked when new data is received on the Heart Rate characteristic.
+
+        Parses the HR data (HR value, RR intervals if present), updates data
+        buffers, updates the status label, and if recording is active, writes
+        data to CSV files using `_write_hr_data_to_file` and
+        `_write_rr_data_to_file`.
+
+        Parameters:
+            sender: The sender of the notification (characteristic handle or similar).
+            data (bytearray): The raw byte data received from the BLE device.
+        """
         if not data:
             return
 
@@ -911,7 +1143,15 @@ class PolarStreamRecorder:
             print(f"Error processing heart rate data: {str(e)}")
 
     def _write_hr_data_to_file(self, timestamp, hr_value):
-        """Write heart rate data to file with better error handling"""
+        """
+        Writes heart rate data to the `HeartRate_recording.csv` file.
+
+        Manages file handle caching and error handling during writes.
+
+        Parameters:
+            timestamp (float): The LSL timestamp for the data point.
+            hr_value (int): The heart rate value in BPM.
+        """
         try:
             # Check if we have a cached file handle
             if not hasattr(self, '_hr_file') or self._hr_file is None:
@@ -945,7 +1185,15 @@ class PolarStreamRecorder:
                     pass
 
     def _write_rr_data_to_file(self, timestamp, rr_value):
-        """Write RR interval data to file with better error handling"""
+        """
+        Writes RR interval data to the `RRinterval_recording.csv` file.
+
+        Manages file handle caching and error handling.
+
+        Parameters:
+            timestamp (float): The LSL timestamp for the data point.
+            rr_value (float): The RR interval value in milliseconds.
+        """
         try:
             # Check if we have a cached file handle
             if not hasattr(self, '_rr_file') or self._rr_file is None:
@@ -979,12 +1227,28 @@ class PolarStreamRecorder:
                     pass
 
     def _pmd_data_handler(self, sender, data):
-        """Handle PMD data (ECG and other raw data)"""
+        """
+        Callback for PMD (Polar Measurement Data), which could include ECG.
+
+        Notes that the current implementation might be simplified and
+        primarily relies on HR service for RR intervals.
+
+        Parameters:
+            sender: The sender of the notification.
+            data (bytearray): The raw PMD data.
+        """
         # This is a simplified handler - full implementation would parse the PMD data format
         # For now, we're focusing on heart rate and RR intervals from the standard BLE service
         pass
 
     def toggle_recording(self):
+        """
+        Starts or stops the data recording session.
+
+        Updates UI elements (button text/state, status) accordingly.
+        Calls `_setup_recording_files` when starting and `stop_recording`
+        when stopping.
+        """
         if not self.recording:
             # Start recording
             try:
@@ -1044,7 +1308,13 @@ class PolarStreamRecorder:
             self.status_var.set(f"Status: Connected | Recording stopped")
 
     def _setup_recording_files(self):
-        """Set up recording files in a separate thread"""
+        """
+        Prepares CSV files for the current recording session.
+
+        Creates `HeartRate_recording.csv`, `RRinterval_recording.csv`, and
+        `marked_timestamps.csv` in the participant's data folder.
+        Writes headers and starts `_monitor_recording`.
+        """
         try:
             # Ensure the participant folder exists
             if not os.path.exists(self.participant_folder):
@@ -1077,7 +1347,12 @@ class PolarStreamRecorder:
                                                              f"Failed to set up recording files: {str(e)}"))
 
     def _monitor_recording(self):
-        """Monitor the recording process to ensure data is being saved"""
+        """
+        Runs in a thread after recording starts to check data writing.
+
+        Checks if data is actually being written to the files, providing
+        a warning if not.
+        """
         if not self.recording:
             return
 
@@ -1101,6 +1376,12 @@ class PolarStreamRecorder:
             print(f"Error monitoring recording: {str(e)}")
 
     def stop_recording(self):
+        """
+        Finalizes the recording session.
+
+        Sets recording flag to False, closes recording file handles,
+        saves marked timestamps, and verifies recorded files. Updates the plot.
+        """
         # Store the recording stop time
         self.recording_stop_time = local_clock()
         print(f"Recording stop time: {self.recording_stop_time}")
@@ -1120,7 +1401,9 @@ class PolarStreamRecorder:
         self.update_plot()
 
     def _close_recording_files(self):
-        """Close any open file handles"""
+        """
+        Safely closes any open recording file handles (`_hr_file`, `_rr_file`).
+        """
         # Close heart rate file
         if hasattr(self, '_hr_file') and self._hr_file is not None:
             try:
@@ -1142,7 +1425,12 @@ class PolarStreamRecorder:
                 self._rr_file = None
 
     def _verify_recording_files(self):
-        """Verify that the recording files exist and contain data"""
+        """
+        Checks created recording files for existence and content.
+
+        Verifies whether they contain data beyond just headers. Prints a
+        summary and shows a message box to the user.
+        """
         try:
             print("\n--- Verifying Recording Files ---")
 
@@ -1189,6 +1477,12 @@ class PolarStreamRecorder:
             print(f"Error verifying recording files: {str(e)}")
 
     def mark_timestamp(self):
+        """
+        Records the current `local_clock()` timestamp.
+
+        This happens when the "Mark Timestamp" button is pressed during an
+        active recording.
+        """
         if self.recording:
             timestamp = local_clock()
             self.marked_timestamps.append(timestamp)
@@ -1197,6 +1491,11 @@ class PolarStreamRecorder:
             messagebox.showwarning("Recording Not Active", "Start recording before marking timestamps.")
 
     def save_marked_timestamps(self):
+        """
+        Saves collected `marked_timestamps` to `marked_timestamps.csv`.
+
+        This is for the current participant.
+        """
         if not self.marked_timestamps:
             return
 
@@ -1207,6 +1506,13 @@ class PolarStreamRecorder:
             csv_writer.writerows([[ts] for ts in self.marked_timestamps])
 
     def update_plot(self):
+        """
+        Redraws the Matplotlib plot with the latest HR and RR data.
+
+        Handles different display styles for pre-recording, recording, and
+        post-recording states. Shows marked timestamps and recording
+        start/stop lines.
+        """
         try:
             self.ax1.clear()
             self.ax2.clear()
@@ -1377,7 +1683,12 @@ class PolarStreamRecorder:
             print(f"Error updating plot: {str(e)}")
 
     def test_connection(self):
-        """Test the connection to the Polar H10 device"""
+        """
+        Performs checks for device connection, data reception, and file system.
+
+        Provides feedback to the user via console and message boxes.
+        May call `_force_test_reading`.
+        """
         if not self.connected or not self.client:
             messagebox.showwarning("Not Connected", "Please connect to a Polar H10 device first.")
             return
@@ -1440,7 +1751,15 @@ class PolarStreamRecorder:
         print("--- Connection Test Complete ---\n")
 
     def _force_test_reading(self, preview_mode=False):
-        """Force a heart rate reading during the connection test or preview mode"""
+        """
+        Attempts to force a heart rate reading.
+
+        Used by `test_connection` or `_periodic_data_request`. Can use
+        different approaches based on `preview_mode`.
+
+        Parameters:
+            preview_mode (bool): If True, may use a lighter approach initially.
+        """
         try:
             # For preview mode, use a lighter approach first
             if preview_mode:
@@ -1467,7 +1786,12 @@ class PolarStreamRecorder:
             print(f"Error in force test reading: {str(e)}")
 
     async def _read_heart_rate(self):
-        """Read heart rate characteristic directly"""
+        """
+        Asynchronously attempts to read the heart rate characteristic directly.
+
+        Returns:
+            int or None: The heart rate value if read successfully, else None.
+        """
         try:
             hr_data = await self.client.read_gatt_char(HEART_RATE_UUID)
             if hr_data and len(hr_data) > 0:
@@ -1487,7 +1811,12 @@ class PolarStreamRecorder:
         return None
 
     async def _aggressive_heart_rate_test(self):
-        """Try more aggressive methods to get heart rate data"""
+        """
+        Asynchronously tries more forceful methods to get HR data.
+
+        This can include restarting notifications completely if initial
+        attempts fail.
+        """
         try:
             # Try to restart the entire connection
             print("Attempting to restart notifications completely...")
@@ -1548,13 +1877,22 @@ class PolarStreamRecorder:
             print(f"Error in aggressive heart rate test: {str(e)}")
 
     def disconnect_from_device(self):
-        """Disconnect from the Polar device"""
+        """
+        Initiates disconnection from Polar device by starting _disconnect_thread.
+
+        Stops recording if active.
+        """
         if self.recording:
             self.stop_recording()
 
         threading.Thread(target=self._disconnect_thread, daemon=True).start()
 
     def _disconnect_thread(self):
+        """
+        Runs in a thread to handle asynchronous BLE disconnection.
+
+        Uses `_disconnect_from_polar()` and updates UI elements.
+        """
         try:
             # Update button appearance for disconnecting state
             self.connect_button.config(
@@ -1613,7 +1951,9 @@ class PolarStreamRecorder:
             )
 
     async def _disconnect_from_polar(self):
-        """Disconnect from the Polar device"""
+        """
+        Asynchronously stops BLE notifications and disconnects the BleakClient.
+        """
         if self.client:
             # Stop notifications
             try:
@@ -1634,11 +1974,46 @@ class PolarStreamRecorder:
 
 
 class LSLDataAnalyzer:
+    """
+    Manages the data analysis component of the Polar H10 Recorder & Analyzer.
+
+    This class is responsible for:
+    - Setting up the UI elements for selecting a participant ID and loading their
+      recorded data.
+    - Displaying analysis results in a text area.
+    - Loading recorded heart rate, RR interval, and marked timestamp data from
+      CSV files stored in participant-specific folders.
+    - Performing statistical analysis on the loaded data. This includes
+      calculating overall metrics for entire recording segments and also
+      performing segment-based analysis using any timestamps that were marked
+      during the recording session.
+    - Calculating and displaying various metrics such as mean, median, min/max values,
+      standard deviation, Interquartile Range (IQR), Root Mean Square of
+      Successive Differences (RMSSD), and Standard Deviation of NN intervals (SDNN).
+    """
     def __init__(self, parent):
+        """
+        Initializes the LSLDataAnalyzer component.
+
+        This constructor calls the `setup_ui()` method to build the user
+        interface for this data analysis module.
+
+        Parameters:
+            parent (tk.Frame): The parent Tkinter frame in which this analyzer's
+                               UI elements will be built.
+        """
         self.parent = parent
         self.setup_ui()
 
     def setup_ui(self):
+        """
+        Creates and arranges all UI elements for the data analysis module.
+
+        This includes setting up an input field for the participant ID, a
+        "Load Data" button to trigger the data loading and analysis process,
+        and a scrolled text area where the analysis results will be displayed.
+        The UI elements are styled to match the application's theme.
+        """
         # Section title with icon-like prefix
         title_frame = tk.Frame(self.parent, bg=DARKER_BG)
         title_frame.pack(fill=tk.X, pady=(0, 15))
@@ -1728,6 +2103,20 @@ class LSLDataAnalyzer:
         self.results_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
 
     def load_data(self):
+        """
+        Loads recorded data for the specified participant ID from CSV files.
+
+        This method is triggered by the "Load Data" button. It first clears any
+        previous results from the results text area. It then reads the participant
+        ID entered by the user.
+        It constructs file paths to `HeartRate_recording.csv`,
+        `RRinterval_recording.csv`, and `marked_timestamps.csv` within the
+        participant's data folder (e.g., `Participant_Data/Participant_<ID>/`).
+        Data is loaded from these CSV files. If files or the folder are not
+        found, appropriate error messages are displayed to the user.
+        Finally, if data is successfully loaded, it calls the `analyze_data()`
+        method to perform and display the statistical analysis.
+        """
         self.results_text.delete(1.0, tk.END)
 
         participant_id = self.participant_id_entry.get().strip()
@@ -1766,6 +2155,32 @@ class LSLDataAnalyzer:
         self.analyze_data(data_buffers, marked_timestamps)
 
     def analyze_data(self, data_buffers, marked_timestamps):
+        """
+        Performs and displays the statistical analysis of the loaded physiological data.
+
+        This method processes the data for each stream ('HeartRate', 'RRinterval')
+        found in the `data_buffers`.
+        Data is first segmented based on significant pauses (defined as more than
+        10 seconds between consecutive data points).
+        For each identified segment, and also for specific 'episodes' within these
+        segments (demarcated by the `marked_timestamps`), it calculates a suite of
+        statistical metrics. These metrics include:
+        - Mean, median, minimum, and maximum values.
+        - Standard deviation and Interquartile Range (IQR).
+        - For 'RRinterval' data, it also calculates RMSSD (Root Mean Square of
+          Successive Differences) and SDNN (Standard Deviation of NN intervals).
+        - Duration of each segment/episode.
+        The calculated statistics are then formatted and displayed in the results
+        text area of the UI.
+
+        Parameters:
+            data_buffers (dict): A dictionary where keys are stream names (e.g.,
+                                 'HeartRate', 'RRinterval') and values are lists
+                                 of tuples, each tuple being (timestamp, value).
+            marked_timestamps (list): A list of float timestamps that were marked
+                                      by the user during the recording session. These
+                                      are used to define specific episodes for analysis.
+        """
         self.results_text.delete(1.0, tk.END)
         streams = ["HeartRate", "RRinterval"]
 

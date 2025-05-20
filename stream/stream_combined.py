@@ -1,3 +1,30 @@
+"""
+This script is designed to find existing LabStreamingLayer (LSL) streams on the
+network and re-stream their data under new LSL stream configurations.
+
+It does not connect directly to a Polar H10 device or any other hardware.
+Instead, it takes a predefined list of existing LSL stream names and types
+(e.g., 'RawECG', 'HeartRate', 'RRinterval') that it attempts to discover on the
+local network.
+
+For each successfully discovered LSL stream, this script creates a new LSL outlet.
+This new outlet can have different stream parameters (e.g., a new name, type,
+sampling frequency, or data format) than the original stream.
+
+The script then continuously pulls data samples from the original (source) LSL
+stream and pushes them to the newly created (destination) LSL stream. This
+functionality can be useful for several purposes, such as:
+- Aggregating data from multiple LSL streams into a single, combined stream (though
+  this specific script creates separate new streams for each source).
+- Changing the LSL properties of an existing stream (e.g., renaming it, altering
+  its reported sampling rate, or changing its data type).
+- Making existing LSL streams available under different identifiers or configurations
+  for compatibility with specific LSL client applications.
+
+The script utilizes Python's threading capabilities to handle multiple re-streaming
+operations concurrently, allowing it to manage several source-to-destination
+LSL stream pairs simultaneously.
+"""
 import threading
 from pylsl import StreamInlet, resolve_stream, StreamInfo, StreamOutlet
 

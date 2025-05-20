@@ -1,3 +1,19 @@
+"""
+This script connects to a Polar H10 heart rate monitor and streams RR interval
+data (time between heartbeats) via LabStreamingLayer (LSL).
+
+It establishes a Bluetooth Low Energy (BLE) connection to the Polar H10 device.
+RR intervals are typically derived from the standard Bluetooth GATT Heart Rate
+service notifications, which can include RR interval data alongside heart rate.
+Alternatively, RR intervals could be processed from the PMD (Polar Measurement Data)
+ECG data stream, though the HR service is the more direct source.
+
+An LSL stream outlet is created to broadcast the RR interval data, which is
+typically provided in milliseconds (ms), along with corresponding LSL timestamps.
+This makes the real-time RR interval data available on the local network,
+allowing other LSL-compatible applications to subscribe to the stream for purposes
+such as Heart Rate Variability (HRV) analysis.
+"""
 from pylsl import StreamInlet, resolve_stream, StreamInfo, StreamOutlet
 
 

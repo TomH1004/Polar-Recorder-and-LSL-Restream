@@ -1,3 +1,21 @@
+"""
+This script is designed for batch processing of previously recorded Polar H10 data,
+specifically RR interval recordings, to calculate Heart Rate Variability (HRV) metrics.
+
+It reads data from the `Participant_Data` directory, processing
+`RRinterval_recording.csv` files for each participant. The script uses
+`marked_timestamps.csv` to segment the data, allowing for analysis of specific
+periods within the recordings.
+
+Key HRV metrics calculated include:
+- RMSSD (Root Mean Square of Successive Differences)
+- SDNN (Standard Deviation of NN intervals)
+- pNN50 (Percentage of successive RR intervals that differ by more than 50 ms)
+
+The results, which encompass both overall HRV values for the entire recording and
+per-segment values based on the marked timestamps, are aggregated and saved into a
+single CSV file named `hrv_values.csv` in the root directory of the project.
+"""
 import os
 import pandas as pd
 import numpy as np

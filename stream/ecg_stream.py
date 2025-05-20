@@ -1,3 +1,16 @@
+"""
+This script is responsible for connecting to a Polar H10 device and streaming
+Electrocardiogram (ECG) data via LabStreamingLayer (LSL).
+
+It establishes a Bluetooth Low Energy (BLE) connection to the Polar H10.
+The script then accesses and streams data from the PMD (Polar Measurement Data)
+characteristic, which provides the raw ECG data.
+
+An LSL stream outlet is created to broadcast this ECG data, along with timestamps,
+making it available on the local network. This allows other LSL-compatible
+applications to subscribe to the stream and receive real-time ECG data for
+analysis, visualization, or further processing.
+"""
 from pylsl import StreamInlet, resolve_stream, StreamInfo, StreamOutlet
 
 

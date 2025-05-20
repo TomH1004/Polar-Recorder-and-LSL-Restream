@@ -1,3 +1,18 @@
+"""
+This script connects to a Polar H10 heart rate monitor and streams Heart Rate (HR)
+data via LabStreamingLayer (LSL).
+
+It establishes a Bluetooth Low Energy (BLE) connection to the Polar H10 device.
+Once connected, it subscribes to the standard Bluetooth GATT Heart Rate service
+and its associated characteristic (UUID `00002a37-0000-1000-8000-00805f9b34fb`)
+to receive HR notifications.
+
+An LSL stream outlet is created to broadcast the received HR data, which includes
+the heart rate in Beats Per Minute (BPM) and corresponding LSL timestamps.
+This makes the real-time HR data available on the local network, allowing other
+LSL-compatible applications to subscribe to the stream for analysis, visualization,
+or other processing tasks.
+"""
 from pylsl import StreamInlet, resolve_stream, StreamInfo, StreamOutlet
 
 
