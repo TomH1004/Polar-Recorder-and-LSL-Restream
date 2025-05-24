@@ -12,7 +12,7 @@ import struct
 import sys
 from datetime import datetime
 from bleak import BleakClient, BleakScanner
-from pylsl import local_clock
+from pylsl import local_clock, StreamInfo, StreamOutlet
 
 # Polar H10 UUIDs
 HEART_RATE_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
@@ -181,28 +181,20 @@ class PolarStreamRecorder:
         self.current_participant_id = None  # Track current participant ID
         self.loop = asyncio.new_event_loop()
         self.plot_update_scheduled = False  # Flag to track if plot updates are scheduled
+        
+        # LSL streaming
+        self.hr_outlet = None
+        self.rr_outlet = None
 
         # Create a status label
         self.status_var = tk.StringVar()
         self.status_var.set("Status: Not connected")
 
-        # Redirect stdout to our console
-        self.stdout_original = sys.stdout
-        sys.stdout = self
+
 
         self.setup_ui()
 
-    def write(self, text):
-        """Redirect stdout to our console"""
-        if hasattr(self, 'console'):
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self.parent.after(0, lambda: self.console.insert(tk.END, f"[{timestamp}] {text}"))
-            self.parent.after(0, lambda: self.console.see(tk.END))
-        return self.stdout_original.write(text)
 
-    def flush(self):
-        """Required for stdout redirection"""
-        return self.stdout_original.flush()
 
     def setup_ui(self):
         # Section title with icon-like prefix
@@ -421,34 +413,7 @@ class PolarStreamRecorder:
         )
         self.status_label.pack(fill=tk.X)
 
-        # Console output with modern styling
-        console_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
-        console_frame.pack(fill=tk.X)
 
-        console_header = tk.Label(
-            console_frame, 
-            text="CONSOLE OUTPUT", 
-            font=("Segoe UI", 10), 
-            bg=DARKER_BG, 
-            fg=SECONDARY_TEXT,
-            anchor="w"
-        )
-        console_header.pack(fill=tk.X)
-        
-        self.console = scrolledtext.ScrolledText(
-            console_frame, 
-            height=5, 
-            font=("Cascadia Code", 9),
-            bg=DARK_BG,
-            fg=TEXT_COLOR,
-            insertbackground=TEXT_COLOR,
-            relief=tk.FLAT,
-            highlightbackground=BORDER_COLOR,
-            highlightthickness=1
-        )
-        self.console.pack(fill=tk.X, expand=True, pady=(5, 0))
-
-        print("Application started. Ready to connect to Polar H10.")
 
         # Plot with dark theme
         plt.style.use('dark_background')
@@ -903,12 +868,15 @@ class PolarStreamRecorder:
                     fg=SUCCESS_COLOR
                 )
             
+            # Set up LSL streams for real-time streaming
+            self._setup_lsl_streams()
+
             # Start updating the plot immediately
             self.update_plot()
             # Schedule regular plot updates
             self._schedule_plot_updates()
 
-            messagebox.showinfo("Connected", "Connected to Polar H10 successfully! Data preview has started automatically.")
+            messagebox.showinfo("Connected", "Connected to Polar H10 successfully! Data preview and LSL streaming have started automatically.")
         except Exception as e:
             messagebox.showerror("Connection Error", f"Failed to connect: {str(e)}")
             # Reset connect button with dark theme styling
@@ -927,6 +895,40 @@ class PolarStreamRecorder:
             self.update_plot()
             # Update plot every 500ms
             self.parent.after(500, self._schedule_plot_updates)
+
+    def _setup_lsl_streams(self):
+        """Set up LSL streams for heart rate and RR intervals"""
+        try:
+            # Create HeartRate stream
+            hr_info = StreamInfo('HeartRate', 'ExciteOMeter', 1, 10, 'float32', 'HeartRateStream')
+            self.hr_outlet = StreamOutlet(hr_info)
+            print("✓ Created LSL stream: HeartRate")
+            
+            # Create RRinterval stream  
+            rr_info = StreamInfo('RRinterval', 'ExciteOMeter', 1, 10, 'float32', 'RRintervalStream')
+            self.rr_outlet = StreamOutlet(rr_info)
+            print("✓ Created LSL stream: RRinterval")
+            
+        except Exception as e:
+            print(f"Error setting up LSL streams: {str(e)}")
+
+    def _cleanup_lsl_streams(self):
+        """Clean up LSL streams"""
+        if self.hr_outlet:
+            try:
+                del self.hr_outlet
+                self.hr_outlet = None
+                print("✓ Cleaned up HeartRate LSL stream")
+            except Exception as e:
+                print(f"Error cleaning up HR LSL stream: {str(e)}")
+                
+        if self.rr_outlet:
+            try:
+                del self.rr_outlet  
+                self.rr_outlet = None
+                print("✓ Cleaned up RRinterval LSL stream")
+            except Exception as e:
+                print(f"Error cleaning up RR LSL stream: {str(e)}")
 
     def _periodic_data_request(self):
         """Periodically request data to ensure continuous data flow"""
@@ -1205,6 +1207,13 @@ class PolarStreamRecorder:
             # Always add to data buffer for display purposes
             self.data_buffers['HeartRate'].append((timestamp, hr_value))
 
+            # Push to LSL stream if available
+            if self.hr_outlet:
+                try:
+                    self.hr_outlet.push_sample([float(hr_value)])
+                except Exception as e:
+                    print(f"Error pushing HR to LSL stream: {str(e)}")
+
             # Limit buffer size to prevent memory issues
             if len(self.data_buffers['HeartRate']) > 1000:
                 # Keep only the most recent 1000 points
@@ -1234,6 +1243,13 @@ class PolarStreamRecorder:
 
                     # Always add to data buffer for display
                     self.data_buffers['RRinterval'].append((timestamp, rr_ms))
+
+                    # Push to LSL stream if available
+                    if self.rr_outlet:
+                        try:
+                            self.rr_outlet.push_sample([float(rr_ms)])
+                        except Exception as e:
+                            print(f"Error pushing RR to LSL stream: {str(e)}")
 
                     # Limit buffer size
                     if len(self.data_buffers['RRinterval']) > 1000:
@@ -2119,6 +2135,9 @@ class PolarStreamRecorder:
             
             # Clear the client
             self.client = None
+            
+        # Clean up LSL streams
+        self._cleanup_lsl_streams()
 
 
 class LSLDataAnalyzer:
