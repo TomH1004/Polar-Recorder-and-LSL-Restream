@@ -175,7 +175,10 @@ class PolarStreamRecorder:
             'RRinterval': []
         }
         self.marked_timestamps = []
+        self.intervals = []  # Store completed intervals as (start, end) pairs
+        self.current_interval_start = None  # Track if we're in the middle of creating an interval
         self.participant_folder = None
+        self.current_participant_id = None  # Track current participant ID
         self.loop = asyncio.new_event_loop()
         self.plot_update_scheduled = False  # Flag to track if plot updates are scheduled
 
@@ -230,8 +233,12 @@ class PolarStreamRecorder:
         )
         self.participant_id_label.pack(fill=tk.X)
         
+        # Entry and button container
+        id_input_frame = tk.Frame(participant_frame, bg=DARKER_BG)
+        id_input_frame.pack(fill=tk.X, pady=(5, 0))
+        
         self.participant_id_entry = tk.Entry(
-            participant_frame, 
+            id_input_frame, 
             font=("Segoe UI", 14),
             bg=DARK_BG,
             fg=TEXT_COLOR,
@@ -240,7 +247,36 @@ class PolarStreamRecorder:
             highlightbackground=BORDER_COLOR,
             highlightthickness=1
         )
-        self.participant_id_entry.pack(fill=tk.X, pady=(5, 0))
+        self.participant_id_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Bind Enter key to set participant ID
+        self.participant_id_entry.bind('<Return>', lambda event: self.set_participant_id())
+        
+        self.set_id_button = tk.Button(
+            id_input_frame, 
+            text="SET ID", 
+            font=("Segoe UI", 10, "bold"),
+            bg=ACCENT_COLOR,
+            fg=DARKER_BG,
+            activebackground=DARK_BG,
+            activeforeground=ACCENT_COLOR,
+            relief=tk.FLAT,
+            padx=15,
+            pady=5,
+            command=self.set_participant_id
+        )
+        self.set_id_button.pack(side=tk.RIGHT, padx=(10, 0))
+        
+        # Current session indicator
+        self.session_status_label = tk.Label(
+            participant_frame,
+            text="No active session",
+            font=("Segoe UI", 9, "italic"),
+            bg=DARKER_BG,
+            fg=SECONDARY_TEXT,
+            anchor="w"
+        )
+        self.session_status_label.pack(fill=tk.X, pady=(5, 0))
 
         # Device selection frame with modern styling
         self.device_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
@@ -334,6 +370,42 @@ class PolarStreamRecorder:
             command=self.mark_timestamp
         )
         self.mark_button.pack(fill=tk.X, pady=5)
+
+        # Interval buttons
+        interval_frame = tk.Frame(button_frame, bg=DARKER_BG)
+        interval_frame.pack(fill=tk.X, pady=5)
+
+        self.start_interval_button = tk.Button(
+            interval_frame, 
+            text="START INTERVAL", 
+            font=("Segoe UI", 10, "bold"),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            activebackground=DARKER_BG,
+            activeforeground=TEXT_COLOR,
+            relief=tk.FLAT,
+            padx=15,
+            pady=8,
+            state=tk.DISABLED,
+            command=self.start_interval
+        )
+        self.start_interval_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+        self.end_interval_button = tk.Button(
+            interval_frame, 
+            text="END INTERVAL", 
+            font=("Segoe UI", 10, "bold"),
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            activebackground=DARKER_BG,
+            activeforeground=TEXT_COLOR,
+            relief=tk.FLAT,
+            padx=15,
+            pady=8,
+            state=tk.DISABLED,
+            command=self.end_interval
+        )
+        self.end_interval_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
 
         # Status indicator with modern styling
         status_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=5)
@@ -435,24 +507,265 @@ class PolarStreamRecorder:
 
         return devices
 
+    def set_participant_id(self):
+        """Set or change the participant ID and start a new session"""
+        new_id = self.participant_id_entry.get().strip()
+        
+        if not new_id:
+            messagebox.showwarning("Invalid ID", "Please enter a valid Participant ID.")
+            return
+            
+        # Check if this is the same as current ID
+        if new_id == self.current_participant_id:
+            return
+            
+        # Check if recording is active
+        if self.recording:
+            response = messagebox.askyesnocancel(
+                "Recording in Progress", 
+                f"A recording is currently active for participant '{self.current_participant_id}'.\n\n"
+                f"Do you want to:\n"
+                f"• Yes: Stop current recording and start new session for '{new_id}'\n"
+                f"• No: Continue current recording\n"
+                f"• Cancel: Abort changing participant ID"
+            )
+            
+            if response is None:  # Cancel
+                # Reset entry to current ID
+                if self.current_participant_id:
+                    self.participant_id_entry.delete(0, tk.END)
+                    self.participant_id_entry.insert(0, self.current_participant_id)
+                return
+            elif response:  # Yes - stop recording and start new session
+                print(f"Stopping current recording for participant '{self.current_participant_id}' and starting new session for '{new_id}'")
+                self.stop_recording()
+                # Wait a moment for recording to fully stop, then check for existing data
+                self.parent.after(100, lambda: self._check_existing_data_and_start_session(new_id))
+            else:  # No - continue current recording
+                # Reset entry to current ID
+                if self.current_participant_id:
+                    self.participant_id_entry.delete(0, tk.END)
+                    self.participant_id_entry.insert(0, self.current_participant_id)
+                return
+        else:
+            # No recording active, check for existing data and start new session
+            self._check_existing_data_and_start_session(new_id)
+            
+    def _check_existing_data_and_start_session(self, participant_id):
+        """Check if participant data already exists and handle accordingly"""
+        participant_folder = os.path.join("Participant_Data", f"Participant_{participant_id}")
+        
+        # Check if participant folder exists and contains data files
+        existing_files = self._get_existing_recording_files(participant_folder)
+        
+        if existing_files:
+            # Show detailed information about existing files
+            file_info = self._get_file_info(existing_files)
+            
+            response = messagebox.askyesnocancel(
+                "Existing Data Found",
+                f"Participant '{participant_id}' already has recorded data:\n\n"
+                f"{file_info}\n\n"
+                f"Do you want to:\n"
+                f"• Yes: Overwrite existing data (PERMANENT DELETION)\n"
+                f"• No: Enter a different participant ID\n"
+                f"• Cancel: Keep current session"
+            )
+            
+            if response is None:  # Cancel
+                # Reset entry to current ID
+                if self.current_participant_id:
+                    self.participant_id_entry.delete(0, tk.END)
+                    self.participant_id_entry.insert(0, self.current_participant_id)
+                else:
+                    self.participant_id_entry.delete(0, tk.END)
+                return
+            elif response:  # Yes - overwrite existing data
+                response_confirm = messagebox.askyesno(
+                    "Confirm Data Overwrite",
+                    f"⚠️ WARNING ⚠️\n\n"
+                    f"This will PERMANENTLY DELETE all existing data for participant '{participant_id}'.\n\n"
+                    f"This action CANNOT be undone!\n\n"
+                    f"Are you absolutely sure you want to proceed?"
+                )
+                
+                if response_confirm:
+                    try:
+                        # Delete existing data files
+                        self._delete_existing_data(participant_folder)
+                        print(f"Deleted existing data for participant '{participant_id}'")
+                        self.start_new_session(participant_id)
+                    except Exception as e:
+                        messagebox.showerror("Error Deleting Data", 
+                                           f"Failed to delete existing data:\n{str(e)}")
+                        # Reset entry
+                        if self.current_participant_id:
+                            self.participant_id_entry.delete(0, tk.END)
+                            self.participant_id_entry.insert(0, self.current_participant_id)
+                        else:
+                            self.participant_id_entry.delete(0, tk.END)
+                else:
+                    # User changed their mind, reset entry
+                    if self.current_participant_id:
+                        self.participant_id_entry.delete(0, tk.END)
+                        self.participant_id_entry.insert(0, self.current_participant_id)
+                    else:
+                        self.participant_id_entry.delete(0, tk.END)
+            else:  # No - enter different ID
+                # Clear entry to let user enter new ID
+                self.participant_id_entry.delete(0, tk.END)
+                self.participant_id_entry.focus_set()
+                messagebox.showinfo("Enter New ID", "Please enter a different participant ID.")
+        else:
+            # No existing data, proceed with new session
+            self.start_new_session(participant_id)
+            
+    def _get_existing_recording_files(self, participant_folder):
+        """Get list of existing recording files for a participant"""
+        if not os.path.exists(participant_folder):
+            return []
+            
+        recording_files = []
+        potential_files = [
+            "HeartRate_recording.csv",
+            "RRinterval_recording.csv", 
+            "marked_timestamps.csv",
+            "intervals.csv"
+        ]
+        
+        for filename in potential_files:
+            file_path = os.path.join(participant_folder, filename)
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                recording_files.append(file_path)
+                
+        return recording_files
+        
+    def _get_file_info(self, file_paths):
+        """Get readable information about existing files"""
+        if not file_paths:
+            return "No files found"
+            
+        info_lines = []
+        for file_path in file_paths:
+            filename = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            # Get creation/modification time
+            mod_time = os.path.getmtime(file_path)
+            mod_date = datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Count lines for CSV files
+            if filename.endswith('.csv'):
+                try:
+                    with open(file_path, 'r') as f:
+                        line_count = sum(1 for line in f) - 1  # Subtract header
+                    info_lines.append(f"• {filename}: {line_count} data points ({file_size} bytes, {mod_date})")
+                except:
+                    info_lines.append(f"• {filename}: {file_size} bytes ({mod_date})")
+            else:
+                info_lines.append(f"• {filename}: {file_size} bytes ({mod_date})")
+                
+        return "\n".join(info_lines)
+        
+    def _delete_existing_data(self, participant_folder):
+        """Delete all existing data for a participant"""
+        if not os.path.exists(participant_folder):
+            return
+            
+        # Delete all files in the participant folder
+        for filename in os.listdir(participant_folder):
+            file_path = os.path.join(participant_folder, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                print(f"Deleted: {file_path}")
+                
+        # Remove the empty directory
+        try:
+            os.rmdir(participant_folder)
+            print(f"Removed directory: {participant_folder}")
+        except OSError:
+            # Directory not empty or other issue, but files are deleted
+            pass
+
+    def start_new_session(self, participant_id):
+        """Start a new session with the given participant ID"""
+        # Reset all session data
+        self.reset_session_data()
+        
+        # Set new participant ID
+        self.current_participant_id = participant_id
+        self.participant_folder = os.path.join("Participant_Data", f"Participant_{participant_id}")
+        
+        # Update UI
+        self.session_status_label.config(
+            text=f"Active session: {participant_id}",
+            fg=SUCCESS_COLOR
+        )
+        
+        # Check folder permissions
+        if not self._check_folder_permissions():
+            # Reset if folder check fails
+            self.current_participant_id = None
+            self.participant_folder = None
+            self.session_status_label.config(
+                text="No active session",
+                fg=SECONDARY_TEXT
+            )
+            return False
+            
+        # Create folder if it doesn't exist
+        os.makedirs(self.participant_folder, exist_ok=True)
+        
+        print(f"Started new session for participant: {participant_id}")
+        print(f"Data will be saved to: {self.participant_folder}")
+        
+        return True
+        
+    def reset_session_data(self):
+        """Reset all session-related data"""
+        # Clear data buffers
+        self.data_buffers = {
+            'HeartRate': [],
+            'RRinterval': []
+        }
+        
+        # Clear timestamps and intervals
+        self.marked_timestamps = []
+        self.intervals = []
+        self.current_interval_start = None
+        
+        # Reset interval button states if they exist
+        if hasattr(self, 'start_interval_button'):
+            self.start_interval_button.config(
+                bg=DARK_BG,
+                fg=TEXT_COLOR if self.connected else SECONDARY_TEXT,
+                text="START INTERVAL"
+            )
+        if hasattr(self, 'end_interval_button'):
+            self.end_interval_button.config(
+                bg=DARK_BG,
+                fg=TEXT_COLOR if self.connected else SECONDARY_TEXT
+            )
+        
+        # Close any open file handles
+        self._close_recording_files()
+        
+        # Ensure recording UI is reset
+        if hasattr(self, 'start_button'):
+            self._update_recording_ui_state(False)
+        
+        print("Session data reset")
+
     def connect_to_device(self):
-        participant_id = self.participant_id_entry.get().strip()
-        if not participant_id:
-            messagebox.showwarning("Participant ID Missing", "Please enter a Participant ID.")
+        # Check if we have an active session
+        if not self.current_participant_id:
+            messagebox.showwarning("No Active Session", "Please set a Participant ID first.")
             return
 
         selected_device = self.device_var.get()
         if not selected_device:
             messagebox.showwarning("Device Not Selected", "Please select a Polar device.")
             return
-
-        self.participant_folder = os.path.join("Participant_Data", f"Participant_{participant_id}")
-
-        # Check folder permissions before proceeding
-        if not self._check_folder_permissions():
-            return
-
-        os.makedirs(self.participant_folder, exist_ok=True)
 
         # Extract device address from selection
         self.device_address = selected_device.split("(")[1].split(")")[0]
@@ -552,6 +865,23 @@ class PolarStreamRecorder:
                 activeforeground=TEXT_COLOR
             )
             
+            # Enable interval buttons
+            self.start_interval_button.config(
+                state=tk.NORMAL,
+                bg=DARK_BG,
+                fg=TEXT_COLOR,
+                activebackground=DARKER_BG,
+                activeforeground=TEXT_COLOR
+            )
+            
+            self.end_interval_button.config(
+                state=tk.NORMAL,
+                bg=DARK_BG,
+                fg=TEXT_COLOR,
+                activebackground=DARKER_BG,
+                activeforeground=TEXT_COLOR
+            )
+            
             # Update connect button to disconnect button with dark theme styling
             self.connect_button.config(
                 text="DISCONNECT", 
@@ -565,6 +895,13 @@ class PolarStreamRecorder:
 
             # Start a periodic data request to ensure preview data is continuously received
             threading.Thread(target=self._periodic_data_request, daemon=True).start()
+            
+            # Update session status
+            if self.current_participant_id:
+                self.session_status_label.config(
+                    text=f"Session: {self.current_participant_id} (connected)",
+                    fg=SUCCESS_COLOR
+                )
             
             # Start updating the plot immediately
             self.update_plot()
@@ -999,17 +1336,8 @@ class PolarStreamRecorder:
                 self.recording = True
                 self.recording_event.set()
                 
-                # Update button appearance for recording state
-                self.start_button.config(
-                    text="STOP RECORDING",
-                    bg=ERROR_COLOR,
-                    fg=DARKER_BG,
-                    activebackground=DARK_BG,
-                    activeforeground=ERROR_COLOR
-                )
-                
-                # Update status with recording indicator
-                self.status_var.set(f"Status: Connected | ● RECORDING")
+                # Update UI to reflect recording started
+                self._update_recording_ui_state(True)
                 print("Recording started successfully")
 
                 # Force an immediate plot update to show recording state
@@ -1029,19 +1357,8 @@ class PolarStreamRecorder:
                     activeforeground=TEXT_COLOR
                 )
         else:
-            # Stop recording and update UI
+            # Stop recording (UI will be updated in stop_recording method)
             self.stop_recording()
-            
-            # Reset button appearance
-            self.start_button.config(
-                text="START RECORDING",
-                bg=DARK_BG,
-                fg=TEXT_COLOR,
-                activebackground=DARKER_BG,
-                activeforeground=TEXT_COLOR
-            )
-            
-            self.status_var.set(f"Status: Connected | Recording stopped")
 
     def _setup_recording_files(self):
         """Set up recording files in a separate thread"""
@@ -1064,6 +1381,13 @@ class PolarStreamRecorder:
                 csv_writer = csv.writer(csvfile)
                 csv_writer.writerow(['Timestamp'])
                 print(f"Created file: {marked_filename}")
+                
+            # Create a file for intervals
+            intervals_filename = os.path.join(self.participant_folder, "intervals.csv")
+            with open(intervals_filename, 'w', newline='') as csvfile:
+                csv_writer = csv.writer(csvfile)
+                csv_writer.writerow(['Start_Timestamp', 'End_Timestamp', 'Duration'])
+                print(f"Created file: {intervals_filename}")
 
             print(f"Recording files created in {self.participant_folder}")
 
@@ -1105,6 +1429,25 @@ class PolarStreamRecorder:
         self.recording_stop_time = local_clock()
         print(f"Recording stop time: {self.recording_stop_time}")
         
+        # Handle incomplete interval
+        if self.current_interval_start is not None:
+            response = messagebox.askyesno("Incomplete Interval", 
+                                         "You have an active interval. Do you want to end it automatically when stopping recording?")
+            if response:
+                self.end_interval()
+            else:
+                # Reset interval state without saving
+                self.current_interval_start = None
+                self.start_interval_button.config(
+                    bg=DARK_BG,
+                    fg=TEXT_COLOR,
+                    text="START INTERVAL"
+                )
+                self.end_interval_button.config(
+                    bg=DARK_BG,
+                    fg=TEXT_COLOR
+                )
+        
         self.recording = False
         self.recording_event.clear()
         
@@ -1116,8 +1459,44 @@ class PolarStreamRecorder:
         # Verify the recording files
         self._verify_recording_files()
         
+        # Update UI to reflect recording stopped
+        self._update_recording_ui_state(False)
+        
         # Force an immediate plot update to show the stop line
         self.update_plot()
+
+    def _update_recording_ui_state(self, is_recording):
+        """Update UI elements to reflect current recording state"""
+        if is_recording:
+            # Update button appearance for recording state
+            self.start_button.config(
+                text="STOP RECORDING",
+                bg=ERROR_COLOR,
+                fg=DARKER_BG,
+                activebackground=DARK_BG,
+                activeforeground=ERROR_COLOR
+            )
+            
+            # Update status with recording indicator
+            if hasattr(self, 'status_var'):
+                current_status = self.status_var.get()
+                if "RECORDING" not in current_status:
+                    self.status_var.set(f"{current_status} | ● RECORDING")
+        else:
+            # Reset button appearance for stopped state
+            self.start_button.config(
+                text="START RECORDING",
+                bg=DARK_BG,
+                fg=TEXT_COLOR,
+                activebackground=DARKER_BG,
+                activeforeground=TEXT_COLOR
+            )
+            
+            # Update status to remove recording indicator
+            if hasattr(self, 'status_var'):
+                current_status = self.status_var.get()
+                if "● RECORDING" in current_status:
+                    self.status_var.set(current_status.replace(" | ● RECORDING", ""))
 
     def _close_recording_files(self):
         """Close any open file handles"""
@@ -1192,19 +1571,92 @@ class PolarStreamRecorder:
         if self.recording:
             timestamp = local_clock()
             self.marked_timestamps.append(timestamp)
-            messagebox.showinfo("Timestamp Marked", f"Marked timestamp at {timestamp}")
+            messagebox.showinfo("Timestamp Marked", f"Marked timestamp at {timestamp:.2f}")
         else:
             messagebox.showwarning("Recording Not Active", "Start recording before marking timestamps.")
 
-    def save_marked_timestamps(self):
-        if not self.marked_timestamps:
+    def start_interval(self):
+        if not self.recording:
+            messagebox.showwarning("Recording Not Active", "Start recording before creating intervals.")
             return
+            
+        if self.current_interval_start is not None:
+            messagebox.showwarning("Interval Already Started", "You have already started an interval. End it before starting a new one.")
+            return
+            
+        self.current_interval_start = local_clock()
+        
+        # Update button states to show interval is active
+        self.start_interval_button.config(
+            bg=WARNING_COLOR,
+            fg=DARKER_BG,
+            text="INTERVAL ACTIVE"
+        )
+        self.end_interval_button.config(
+            bg=SUCCESS_COLOR,
+            fg=DARKER_BG
+        )
+        
+        messagebox.showinfo("Interval Started", f"Interval started at {self.current_interval_start:.2f}")
+        print(f"Interval started at {self.current_interval_start:.2f}")
 
-        marked_filename = os.path.join(self.participant_folder, "marked_timestamps.csv")
-        with open(marked_filename, 'w', newline='') as marked_file:
-            csv_writer = csv.writer(marked_file)
-            csv_writer.writerow(['Timestamp'])
-            csv_writer.writerows([[ts] for ts in self.marked_timestamps])
+    def end_interval(self):
+        if not self.recording:
+            messagebox.showwarning("Recording Not Active", "Start recording before creating intervals.")
+            return
+            
+        if self.current_interval_start is None:
+            messagebox.showwarning("No Active Interval", "Start an interval before ending it.")
+            return
+            
+        end_time = local_clock()
+        interval_duration = end_time - self.current_interval_start
+        
+        # Store the completed interval
+        self.intervals.append((self.current_interval_start, end_time))
+        
+        # Reset interval state
+        self.current_interval_start = None
+        
+        # Reset button states
+        self.start_interval_button.config(
+            bg=DARK_BG,
+            fg=TEXT_COLOR,
+            text="START INTERVAL"
+        )
+        self.end_interval_button.config(
+            bg=DARK_BG,
+            fg=TEXT_COLOR
+        )
+        
+        messagebox.showinfo("Interval Completed", 
+                          f"Interval completed!\nDuration: {interval_duration:.2f} seconds\nTotal intervals: {len(self.intervals)}")
+        print(f"Interval completed: {self.current_interval_start:.2f} - {end_time:.2f} (duration: {interval_duration:.2f}s)")
+        print(f"Total intervals created: {len(self.intervals)}")
+
+    def save_marked_timestamps(self):
+        # Save timestamps
+        if self.marked_timestamps:
+            marked_filename = os.path.join(self.participant_folder, "marked_timestamps.csv")
+            with open(marked_filename, 'w', newline='') as marked_file:
+                csv_writer = csv.writer(marked_file)
+                csv_writer.writerow(['Timestamp'])
+                csv_writer.writerows([[ts] for ts in self.marked_timestamps])
+                
+        # Save intervals
+        if self.intervals:
+            intervals_filename = os.path.join(self.participant_folder, "intervals.csv")
+            with open(intervals_filename, 'w', newline='') as intervals_file:
+                csv_writer = csv.writer(intervals_file)
+                csv_writer.writerow(['Start_Timestamp', 'End_Timestamp', 'Duration'])
+                for start, end in self.intervals:
+                    duration = end - start
+                    csv_writer.writerow([start, end, duration])
+                    
+        # Handle incomplete interval
+        if self.current_interval_start is not None:
+            print(f"Warning: Incomplete interval detected (started at {self.current_interval_start:.2f})")
+            # Optionally, you could auto-complete it here or save it separately
 
     def update_plot(self):
         try:
@@ -1368,7 +1820,19 @@ class PolarStreamRecorder:
             # Add marked timestamps as vertical lines
             for ts in self.marked_timestamps:
                 if current_time - ts <= 100:  # Only if timestamp is within view
-                    self.ax1.axvline(x=ts, color='m', linestyle=':', alpha=0.7)
+                    self.ax1.axvline(x=ts, color='m', linestyle=':', alpha=0.7, label='Marked Timestamp' if ts == self.marked_timestamps[0] else "")
+                    
+            # Add completed intervals as shaded regions
+            for i, (start, end) in enumerate(self.intervals):
+                if current_time - end <= 100:  # Only if interval end is within view
+                    self.ax1.axvspan(start, end, alpha=0.2, color='cyan', 
+                                   label='Completed Intervals' if i == 0 else "")
+                    
+            # Add current active interval as shaded region
+            if self.current_interval_start is not None:
+                if current_time - self.current_interval_start <= 100:  # Only if interval start is within view
+                    self.ax1.axvspan(self.current_interval_start, current_time, alpha=0.3, color='yellow',
+                                   label='Active Interval')
 
             # Draw the plot
             self.canvas_plot.draw()
@@ -1582,6 +2046,30 @@ class PolarStreamRecorder:
                 fg=SECONDARY_TEXT
             )
             
+            # Disable interval buttons
+            self.start_interval_button.config(
+                state=tk.DISABLED,
+                bg=DARK_BG,
+                fg=SECONDARY_TEXT,
+                text="START INTERVAL"
+            )
+            
+            self.end_interval_button.config(
+                state=tk.DISABLED,
+                bg=DARK_BG,
+                fg=SECONDARY_TEXT
+            )
+            
+            # Reset interval state
+            self.current_interval_start = None
+            
+            # Update session status if we have one
+            if self.current_participant_id:
+                self.session_status_label.config(
+                    text=f"Session: {self.current_participant_id} (disconnected)",
+                    fg=WARNING_COLOR
+                )
+            
             # Reset connect button with dark theme styling
             self.connect_button.config(
                 text="CONNECT", 
@@ -1678,6 +2166,9 @@ class LSLDataAnalyzer:
             highlightthickness=1
         )
         self.participant_id_entry.pack(fill=tk.X, pady=(5, 0))
+        
+        # Bind Enter key to load data
+        self.participant_id_entry.bind('<Return>', lambda event: self.load_data())
 
         # Load Data Button with modern styling
         button_frame = tk.Frame(self.parent, bg=DARKER_BG, pady=10)
@@ -1749,6 +2240,15 @@ class LSLDataAnalyzer:
                 reader = csv.reader(marked_file)
                 next(reader)  # Header überspringen
                 marked_timestamps = [float(row[0]) for row in reader]
+                
+        # Laden der Intervalle
+        intervals = []
+        intervals_filename = os.path.join(participant_folder, "intervals.csv")
+        if os.path.exists(intervals_filename):
+            with open(intervals_filename, 'r') as intervals_file:
+                reader = csv.reader(intervals_file)
+                next(reader)  # Header überspringen
+                intervals = [(float(row[0]), float(row[1]), float(row[2])) for row in reader]
 
         # Laden der Daten
         streams = ["HeartRate", "RRinterval"]
@@ -1763,9 +2263,9 @@ class LSLDataAnalyzer:
                     data_buffers[stream] = [(float(row[0]), float(row[1])) for row in reader]
 
         # Analysieren der Daten mit Episoden-Erkennung
-        self.analyze_data(data_buffers, marked_timestamps)
+        self.analyze_data(data_buffers, marked_timestamps, intervals)
 
-    def analyze_data(self, data_buffers, marked_timestamps):
+    def analyze_data(self, data_buffers, marked_timestamps, intervals):
         self.results_text.delete(1.0, tk.END)
         streams = ["HeartRate", "RRinterval"]
 
@@ -1873,6 +2373,55 @@ class LSLDataAnalyzer:
 
                 else:
                     self.results_text.insert(tk.END, "  No Marked Timestamps Available for This Segment\n\n")
+                    
+                # Analyse der Intervalle innerhalb dieses Segments
+                if intervals:
+                    segment_intervals = []
+                    for start_interval, end_interval, duration in intervals:
+                        # Check if interval overlaps with this segment
+                        if (start_interval <= timestamps[-1] and end_interval >= timestamps[0]):
+                            # Get data within this interval
+                            interval_values = [value for ts, value in segment if start_interval <= ts <= end_interval]
+                            if interval_values:
+                                mean_interval = np.mean(interval_values)
+                                median_interval = np.median(interval_values)
+                                min_interval = np.min(interval_values)
+                                max_interval = np.max(interval_values)
+                                std_dev_interval = np.std(interval_values)
+                                iqr_interval = np.percentile(interval_values, 75) - np.percentile(interval_values, 25)
+                                rmssd_interval = None
+                                sdnn_interval = None
+                                if stream == "RRinterval" and len(interval_values) > 1:
+                                    rr_diff = np.diff(interval_values)
+                                    rmssd_interval = np.sqrt(np.mean(rr_diff ** 2)) if len(rr_diff) > 0 else None
+                                    sdnn_interval = np.std(interval_values, ddof=1)
+                                
+                                segment_intervals.append((start_interval, end_interval, duration, mean_interval, 
+                                                       median_interval, min_interval, max_interval, std_dev_interval, 
+                                                       iqr_interval, rmssd_interval, sdnn_interval))
+                    
+                    # Output interval results
+                    if segment_intervals:
+                        self.results_text.insert(tk.END, f"  Interval Analysis:\n")
+                        for i, (start_interval, end_interval, duration, mean_interval, median_interval, min_interval, 
+                               max_interval, std_dev_interval, iqr_interval, rmssd_interval, sdnn_interval) in enumerate(segment_intervals):
+                            self.results_text.insert(tk.END, f"    Interval {i + 1} ({start_interval:.2f} - {end_interval:.2f}s):\n")
+                            self.results_text.insert(tk.END, f"      Duration: {duration:.2f} seconds\n")
+                            self.results_text.insert(tk.END, f"      Mean: {mean_interval:.2f}\n")
+                            self.results_text.insert(tk.END, f"      Median: {median_interval:.2f}\n")
+                            self.results_text.insert(tk.END, f"      Min: {min_interval:.2f}\n")
+                            self.results_text.insert(tk.END, f"      Max: {max_interval:.2f}\n")
+                            self.results_text.insert(tk.END, f"      Variability (Standard Deviation): {std_dev_interval:.2f}\n")
+                            self.results_text.insert(tk.END, f"      Interquartile Range (IQR): {iqr_interval:.2f}\n")
+                            if rmssd_interval is not None:
+                                self.results_text.insert(tk.END, f"      RMSSD: {rmssd_interval:.2f}\n")
+                            if sdnn_interval is not None:
+                                self.results_text.insert(tk.END, f"      SDNN: {sdnn_interval:.2f}\n")
+                            self.results_text.insert(tk.END, f"\n")
+                    else:
+                        self.results_text.insert(tk.END, f"  No Intervals Available for This Segment\n\n")
+                else:
+                    self.results_text.insert(tk.END, f"  No Intervals Available for This Segment\n\n")
 
 
 if __name__ == "__main__":

@@ -2,3 +2,68 @@
 /build/
 *.spec
 *.png
+/.venv/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Operating System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# Coverage and testing
+.coverage
+.tox/
+.pytest_cache/
+htmlcov/
+coverage.xml
+*.cover
+
+# Project specific
+Participant_Data/
+*_recording.csv
+marked_timestamps.csv
+intervals.csv
+
